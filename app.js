@@ -6,7 +6,6 @@ const I={EN:{top:'Handcrafted in Indonesia · Designed for the World',topShip:'W
 const rates={USD:1,IDR:16000};let slide=0,filter='all';
 renderLanguage();constZ PALMA_API_BASE =
   'https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev';
-
 async function syncProductsFromAPI() {
   try {
     const response = await fetch(`${PALMA_API_BASE}/api/products`, {
@@ -24,17 +23,62 @@ async function syncProductsFromAPI() {
     const result = await response.json();
 
     if (!result || !Array.isArray(result.products)) {
-      console.warn('Format API products tidak sesuai:', result);
+      console.warn(
+        '[PALMA ROTAN] Format API products tidak sesuai:',
+        result
+      );
       return;
     }
 
-    data.products = result.products.map(p => ({
-      ...p,
-      prices: {
-        IDR: Number(p.prices?.IDR ?? p.price_idr ?? 0),
-        USD: Number(p.prices?.USD ?? p.price_usd ?? p.price ?? 0)
+    const language = data.settings.language === 'ID' ? 'ID' : 'EN';
+
+    data.products = result.products.map(p => {
+      let image = '';
+
+      if (p.image_key) {
+        if (p.image_key.startsWith('media/')) {
+          image = `${PALMA_API_BASE}/media/${p.image_key}`;
+        } else if (p.image_key.startsWith('assets/')) {
+          image = p.image_key;
+        } else {
+          image = `assets/${p.image_key}`;
+        }
       }
-    }));
+
+      return {
+        id: p.id,
+
+        name: language === 'ID'
+          ? (p.name_id || p.name_en || '')
+          : (p.name_en || p.name_id || ''),
+
+        type: p.type || 'Retail',
+        category: p.category || 'all',
+
+        price: Number(
+          p.price_usd ?? p.price ?? 0
+        ),
+
+        stock: Number(p.stock ?? 0),
+
+        moq: Number(p.moq ?? 1),
+
+        prices: {
+          IDR: Number(p.price_idr ?? 0),
+          USD: Number(p.price_usd ?? p.price ?? 0)
+        },
+
+        image,
+
+        description: language === 'ID'
+          ? (p.description_id || p.description_en || '')
+          : (p.description_en || p.description_id || ''),
+
+        weight: Number(p.weight_kg ?? 0),
+
+        dimensions: p.dimensions_cm || ''
+      };
+    });
 
     localStorage.setItem(KEY, JSON.stringify(data));
 
@@ -44,12 +88,14 @@ async function syncProductsFromAPI() {
       '[PALMA ROTAN] Produk berhasil disinkronkan dari D1:',
       data.products.length
     );
+
   } catch (error) {
     console.warn(
       '[PALMA ROTAN] Sinkronisasi produk API gagal:',
       error
     );
   }
+}
 }{try{const raw=localStorage.getItem(KEY);if(!raw)return;const next=JSON.parse(raw);if(next&&next.settings){data=next;applyAppearance();renderLanguage()}}catch(e){console.warn('Appearance sync failed',e)}}
 window.addEventListener('storage',e=>{if(e.key===KEY)syncFromAdmin()});
 window.addEventListener('focus',()=>syncFromAdmin());
