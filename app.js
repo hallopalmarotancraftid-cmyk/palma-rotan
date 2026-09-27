@@ -112,13 +112,18 @@ async function syncProductsFromAPI() {
       let image = '';
 
       if (p.image_key) {
-        if (p.image_key.startsWith('media/')) {
-          image = `${PALMA_API_BASE}/media/${p.image_key}`;
-        } else if (p.image_key.startsWith('assets/')) {
-          image = p.image_key;
+        const key = String(p.image_key).trim();
+        if (/^data:|^blob:|^https?:\/\//i.test(key)) {
+          image = key;
+        } else if (key.startsWith('assets/')) {
+          image = normalizeAssetUrl(key);
+        } else if (key.startsWith('media/')) {
+          image = `\${PALMA_API_BASE}/\${key}`;
         } else {
-          image = `assets/${p.image_key}`;
+          image = `\${PALMA_API_BASE}/media/\${key.replace(/^\\/+/, '')}`;
         }
+      } else if (p.image) {
+        image = normalizeAssetUrl(p.image);
       }
 
       return {
