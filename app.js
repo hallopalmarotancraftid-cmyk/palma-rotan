@@ -6,6 +6,35 @@ const I={EN:{top:'Handcrafted in Indonesia · Designed for the World',topShip:'W
 const rates={USD:1,IDR:16000};let slide=0,filter='all';
 renderLanguage();constZ PALMA_API_BASE =
   'https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev';
+async function syncSettingsFromAPI() {
+  try {
+    const response = await fetch(`${PALMA_API_BASE}/api/settings`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      },
+      cache: 'no-store'
+    });
+
+    if (!response.ok) return;
+
+    const result = await response.json();
+
+    if (result && result.settings) {
+      data.settings = {
+        ...data.settings,
+        ...result.settings
+      };
+
+      localStorage.setItem(KEY, JSON.stringify(data));
+
+      applyAppearance();
+      renderLanguage();
+    }
+  } catch (error) {
+    console.warn('Gagal sinkronisasi settings:', error);
+  }
+}
 async function syncProductsFromAPI() {
   try {
     const response = await fetch(`${PALMA_API_BASE}/api/products`, {
@@ -154,4 +183,4 @@ function openSearch(){const q=prompt('Search products');if(!q)return;const found
 function openDrawer(){document.getElementById('drawer').classList.add('open')}function closeDrawer(){document.getElementById('drawer').classList.remove('open')}function toggleNav(){document.getElementById('nav').style.display=document.getElementById('nav').style.display==='flex'?'none':'flex'}function toggleLanguage(){data.settings.language=data.settings.language==='ID'?'EN':'ID';save();renderLanguage()}function cycleCurrency(){const cs=['USD','IDR'];const i=cs.indexOf(data.settings.currency);data.settings.currency=cs[(i+1)%cs.length];save();renderLanguage();renderProducts()}
 document.getElementById('quoteForm').onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target);data.quotes.unshift({id:'Q-'+Date.now(),created:new Date().toISOString(),name:fd.get('name'),email:fd.get('email'),country:fd.get('country'),qty:fd.get('qty'),message:fd.get('message'),status:'NEW'});save();e.target.reset();toast(data.settings.language==='ID'?'Permintaan penawaran berhasil dikirim':'Quote request submitted')};
 function initScrollMotion(){const els=document.querySelectorAll('.reveal,.reveal-group');if(!('IntersectionObserver' in window)){els.forEach(e=>e.classList.add('is-visible'));document.querySelectorAll('.reveal-item').forEach(e=>e.classList.add('is-visible'));return}const observer=new IntersectionObserver(entries=>{entries.forEach(entry=>{entry.target.classList.toggle('is-visible',entry.isIntersecting);if(entry.isIntersecting&&entry.target.classList.contains('reveal-group'))entry.target.querySelectorAll('.reveal-item').forEach((el)=>el.classList.add('is-visible'));else if(!entry.isIntersecting&&entry.target.classList.contains('reveal-group'))entry.target.querySelectorAll('.reveal-item').forEach((el)=>el.classList.remove('is-visible'))})},{threshold:.14,rootMargin:'0px 0px -8% 0px'});els.forEach(e=>observer.observe(e))}
-renderLanguage();initScrollMotion();syncProductsFromAPI();
+renderLanguage();initScrollMotion();syncSettingsFromAPI();syncProductsFromAPI();
