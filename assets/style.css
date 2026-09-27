@@ -43,9 +43,11 @@ body{overflow-x:hidden}
 .heroCopy h1{animation-delay:.08s}.heroCopy p{animation-delay:.15s}.heroCopy .btn{animation-delay:.22s}
 @keyframes heroTextIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 .dots button{transition:width .45s var(--ease-soft),background .45s ease,opacity .45s ease}.dots button.active{width:52px}
-.reveal{opacity:0;transform:translateY(42px);transition:opacity .85s var(--ease-silk),transform 1s var(--ease-soft);will-change:opacity,transform}
-.reveal.is-visible{opacity:1;transform:translateY(0)}
-.reveal-group .reveal-item{opacity:0;transform:translateY(34px);transition:opacity .8s var(--ease-silk),transform .9s var(--ease-soft)}
+.reveal{opacity:1;transform:none;transition:opacity .85s var(--ease-silk),transform 1s var(--ease-soft);will-change:opacity,transform}
+.reveal.reveal-ready{opacity:0;transform:translateY(42px)}
+.reveal.reveal-ready.is-visible{opacity:1;transform:translateY(0)}
+.reveal-group .reveal-item{opacity:1;transform:none;transition:opacity .8s var(--ease-silk),transform .9s var(--ease-soft)}
+.reveal-ready .reveal-item{opacity:0;transform:translateY(34px)}
 .reveal-group.is-visible .reveal-item,.reveal-group .reveal-item.is-visible{opacity:1;transform:translateY(0)}
 .reveal-group.is-visible .reveal-item:nth-child(2){transition-delay:.08s}.reveal-group.is-visible .reveal-item:nth-child(3){transition-delay:.16s}.reveal-group.is-visible .reveal-item:nth-child(4){transition-delay:.24s}.reveal-group.is-visible .reveal-item:nth-child(5){transition-delay:.32s}.reveal-group.is-visible .reveal-item:nth-child(6){transition-delay:.4s}
 .collection{transition:transform .8s var(--ease-soft)}.collection:hover{transform:translateY(-5px)}
