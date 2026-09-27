@@ -173,8 +173,10 @@ async function syncProductsFromAPI() {
   }
 }
 function syncFromAdmin(){try{const raw=safeLocalLoad();if(!raw)return;const next=JSON.parse(raw);if(next&&next.settings){data=next;applyAppearance();renderLanguage()}}catch(e){console.warn('Appearance sync failed',e)}}
-window.addEventListener('storage',e=>{if(e.key===KEY)syncFromAdmin()});
-window.addEventListener('focus',()=>syncFromAdmin());
+// Production database/API is the source of truth for visitor content.
+// Do not overwrite freshly fetched remote settings with stale localStorage data on focus.
+window.addEventListener('storage',e=>{if(e.key===KEY)syncSettingsFromAPI()});
+window.addEventListener('focus',()=>syncSettingsFromAPI());
 function save(){safeLocalSave()}function cart(){return JSON.parse(localStorage.getItem('palmaCart')||'[]')}function wish(){return JSON.parse(localStorage.getItem('palmaWish')||'[]')}function priceValue(p,c){if(p&&p.prices&&p.prices[c]!=null&&p.prices[c]!=='' )return Number(p.prices[c])||0;return (Number(p&&p.price)||0)*rates[c]}function money(v){const c=data.settings.currency||'USD';return new Intl.NumberFormat(c==='IDR'?'id-ID':'en-US',{style:'currency',currency:c,maximumFractionDigits:c==='IDR'?0:2}).format((v||0))}function moneyCurrency(v,c){c=c||data.settings.currency||'USD';return new Intl.NumberFormat(c==='IDR'?'id-ID':'en-US',{style:'currency',currency:c,maximumFractionDigits:c==='IDR'?0:2}).format((v||0))}function productMoney(p){const c=data.settings.currency||'USD';return money(priceValue(p,c))}function toast(t){const x=document.getElementById('toast');x.textContent=t;x.classList.add('show');setTimeout(()=>x.classList.remove('show'),2200)}
 function activeChannels(position){return (data.settings.channels||[]).filter(c=>c.active&&c.url&&(!position||!c.positions||c.positions.includes(position)))}
 function renderChannels(){const box=document.getElementById('salesChannels');if(!box)return;box.innerHTML=activeChannels('footer').map(c=>`<a class="channelBtn" href="${c.url}" ${c.newTab?'target="_blank" rel="noopener noreferrer"':''}>${c.label||c.name}</a>`).join('')}
