@@ -552,7 +552,7 @@ __name(adminMedia, "adminMedia");
 async function documentPdf(request, env, type, orderId) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
-  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?`).bind(orderId).first();
+  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=? OR o.order_number=?`).bind(orderId, orderId).first();
   if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(env));
   const items = (await env.DB.prepare("SELECT * FROM order_items WHERE order_id=? ORDER BY rowid").bind(orderId).all()).results || [];
   const lines = [`Order: ${order.order_number}`, `Date: ${order.created_at}`, `Customer: ${order.first_name || ""} ${order.last_name || ""}`.trim(), `Email: ${order.email || ""}`, `Currency: ${order.original_currency}`];
