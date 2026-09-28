@@ -52,16 +52,10 @@ async function syncSettingsFromAPI() {
         if (homepage.introEyebrowID != null) data.introEyebrowID = homepage.introEyebrowID;
         if (homepage.showIntroEyebrow != null) data.showIntroEyebrow = homepage.showIntroEyebrow !== false;
         if (Array.isArray(homepage.hero)) {
-          data.hero = data.hero || [];
-          homepage.hero.forEach((remoteHero, index) => {
-            data.hero[index] = { ...(data.hero[index] || {}), ...remoteHero };
-          });
+          data.hero = homepage.hero.map(remoteHero => ({ ...remoteHero }));
         }
         if (Array.isArray(homepage.collections)) {
-          data.collections = homepage.collections.map((remoteCollection, index) => ({
-            ...(data.collections?.[index] || {}),
-            ...remoteCollection
-          }));
+          data.collections = homepage.collections.map(remoteCollection => ({ ...remoteCollection }));
         }
         if (homepage.catalogSection) data.catalogSection={...(data.catalogSection||{}),...homepage.catalogSection};
         if (homepage.processSection) data.processSection={...(data.processSection||{}),...homepage.processSection};
@@ -121,9 +115,9 @@ async function syncProductsFromAPI() {
         } else if (key.startsWith('assets/')) {
           image = normalizeAssetUrl(key);
         } else if (key.startsWith('media/')) {
-          image = `\${PALMA_API_BASE}/\${key}`;
+          image = `${PALMA_API_BASE}/${key}`;
         } else {
-          image = `\${PALMA_API_BASE}/media/\${key.replace(/^\\/+/, '')}`;
+          image = `${PALMA_API_BASE}/media/${key.replace(/^\/+/, '')}`;
         }
       } else if (p.image) {
         image = normalizeAssetUrl(p.image);
