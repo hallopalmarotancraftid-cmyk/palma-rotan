@@ -201,11 +201,15 @@ async function createOrder(request, env) {
   const orderNumber = `PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   const customerEmail = String(body.customer?.email || "").trim().toLowerCase() || null;
   let customerId = null;
+  let isNewCustomer = false;
   if (customerEmail) {
     const existingCustomer = await env.DB.prepare("SELECT id FROM customers WHERE email=? LIMIT 1").bind(customerEmail).first();
     customerId = existingCustomer?.id || null;
   }
-  if (!customerId) customerId = id("cus");
+  if (!customerId) {
+    customerId = id("cus");
+    isNewCustomer = true;
+  }
   const setting = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key='usdToIdrRate'`).first();
   const rate = parseSettingNumber(setting?.value_json, 16000);
   const total = subtotal + shipping;
@@ -213,7 +217,7 @@ async function createOrder(request, env) {
   if (!Number.isFinite(adminTotalIdr) || adminTotalIdr <= 0) return json({ error: "Total order tidak valid" }, 500, cors(env));
 
   const statements = [];
-  if (customerId.startsWith("cus_")) {
+  if (isNewCustomer) {
     statements.push(
       env.DB.prepare(`INSERT INTO customers(id,email,first_name,last_name,phone,country) VALUES(?,?,?,?,?,?)`).bind(
         customerId, customerEmail, body.customer?.firstName || "", body.customer?.lastName || "",
