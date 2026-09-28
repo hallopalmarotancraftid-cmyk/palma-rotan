@@ -455,52 +455,117 @@ function safePdfText(value) {
   return String(value ?? "").replace(/[^\x20-\x7E]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 __name(safePdfText, "safePdfText");
-function makeSimplePdf(title, lines) {
+function makeProfessionalPdf(type, order, items) {
   const esc = safePdfText;
-  let stream = `BT
-/F1 18 Tf
-50 780 Td
-(${esc(title)}) Tj
-/F1 10 Tf
-0 -28 Td
-`;
-  for (const line of lines) {
-    stream += `(${esc(line)}) Tj
-0 -16 Td
-`;
+  const W = 595, H = 842, M = 42;
+  const commands = [];
+  const money = (n, currency) => {
+    const v = Number(n) || 0;
+    return currency === "IDR"
+      ? "Rp " + new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(v)
+      : "$ " + new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  };
+  const text = (x, y, value, size = 10, font = "F1") => {
+    commands.push("BT", `/${font} ${size} Tf`, `1 0 0 1 ${x} ${y} Tm`, `(${esc(value)}) Tj`, "ET");
+  };
+  const line = (x1,y1,x2,y2,width=1) => commands.push(`${width} w`,`${x1} ${y1} m ${x2} ${y2} l S`);
+  const rect = (x,y,w,h,fill=false) => commands.push(fill ? `q 0.965 0.945 0.92 rg ${x} ${y} ${w} ${h} re f Q` : `q 0.82 0.78 0.72 RG ${x} ${y} ${w} ${h} re S Q`);
+  const wrap = (value, max=58) => {
+    const words = String(value ?? "").split(/\\s+/); const out=[]; let cur="";
+    for(const word of words){ const next=cur?cur+" "+word:word; if(next.length>max&&cur){out.push(cur);cur=word}else cur=next; }
+    if(cur) out.push(cur); return out.length?out:[""];
+  };
+
+  // Header
+  text(M, 792, "PALMA ROTAN", 22, "F2");
+  text(M, 775, "RATTAN CRAFT • INDONESIA", 8, "F1");
+  text(430, 792, type === "invoice" ? "INVOICE" : "PACKING LIST", 18, "F2");
+  text(430, 776, `Order #${order.order_number}`, 9, "F1");
+  line(M, 758, W-M, 758, 1.6);
+
+  // Meta cards
+  rect(M, 680, 247, 58);
+  rect(306, 680, 247, 58);
+  text(54, 720, "BILL TO", 8, "F2");
+  text(54, 704, `${order.first_name || ""} ${order.last_name || ""}`.trim() || "-", 11, "F2");
+  text(54, 689, order.email || "-", 8, "F1");
+  text(322, 720, "DOCUMENT", 8, "F2");
+  text(322, 704, type === "invoice" ? (order.invoice_number || "Invoice") : (order.packing_number || "Packing"), 10, "F2");
+  text(322, 689, `Date: ${order.created_at || "-"}`, 8, "F1");
+
+  let y=650;
+  if(type === "invoice"){
+    text(M,y,"PAYMENT STATUS",8,"F2");
+    text(M,y-17,String(order.payment_status || "PENDING"),11,"F2");
+    text(306,y,"CURRENCY",8,"F2");
+    text(306,y-17,String(order.original_currency || "USD"),11,"F2");
+    y-=48;
+  } else {
+    text(M,y,"PACKING STATUS",8,"F2");
+    text(M,y-17,"PENDING",11,"F2");
+    text(306,y,"PACKAGES",8,"F2");
+    text(306,y-17,"1",11,"F2");
+    y-=48;
   }
-  stream += "ET\n";
-  const objects = [];
-  objects.push("<< /Type /Catalog /Pages 2 0 R >>");
-  objects.push("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  objects.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>");
-  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-  objects.push(`<< /Length ${stream.length} >>
-stream
-${stream}endstream`);
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  for (let i = 0; i < objects.length; i++) {
-    offsets.push(pdf.length);
-    pdf += `${i + 1} 0 obj
-${objects[i]}
-endobj
-`;
+
+  // Items table
+  rect(M, y-28, W-2*M, 28, true);
+  text(50,y-18,"ITEM",8,"F2"); text(380,y-18,"QTY",8,"F2"); text(425,y-18,"UNIT PRICE",8,"F2"); text(505,y-18,"AMOUNT",8,"F2");
+  y-=46;
+  for(const item of items){
+    const nameLines=wrap(item.product_name || "Product", 48);
+    const rowH=Math.max(28,nameLines.length*12+12);
+    let yy=y;
+    for(const nl of nameLines){ text(50,yy,nl,9,"F1"); yy-=12; }
+    text(390,y,String(item.quantity || 0),9,"F1");
+    text(425,y,money(item.unit_price,item.currency),8,"F1");
+    text(505,y,money(item.total_price,item.currency),8,"F1");
+    line(M,y-rowH+5,W-M,y-rowH+5,0.5);
+    y-=rowH;
+    if(y<250) break;
   }
-  const xref = pdf.length;
-  pdf += `xref
-0 ${objects.length + 1}
-0000000000 65535 f 
-`;
-  for (let i = 1; i < offsets.length; i++) pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
-  pdf += `trailer
-<< /Size ${objects.length + 1} /Root 1 0 R >>
-startxref
-${xref}
-%%EOF`;
+
+  if(type==="invoice"){
+    const subtotal=Number(order.original_amount)||0;
+    const shipping=Number(order.shipping_amount)||0;
+    const total=Number(order.total_amount)||0;
+    const cur=order.original_currency||"USD";
+    y=Math.max(y-10,235);
+    const sx=365;
+    text(sx,y,"Subtotal",9,"F1"); text(505,y,money(subtotal,cur),9,"F1");
+    text(sx,y-20,"Shipping",9,"F1"); text(505,y-20,money(shipping,cur),9,"F1");
+    line(sx,y-30,W-M,y-30,1);
+    text(sx,y-50,"TOTAL",11,"F2"); text(490,y-50,money(total,cur),11,"F2");
+    text(M,185,"PAYMENT",8,"F2");
+    text(M,169,order.payment_status || "PENDING",10,"F2");
+  } else {
+    text(M,185,"DESTINATION",8,"F2");
+    const destination=wrap(order.shipping_address_json || "-", 80);
+    let yy=169; for(const l of destination.slice(0,3)){text(M,yy,l,9,"F1");yy-=12;}
+  }
+
+  line(M,92,W-M,92,0.8);
+  text(M,72,"Thank you for choosing PALMA ROTAN.",8,"F1");
+  text(380,72,"palma-rotan.pages.dev",8,"F1");
+
+  const stream=commands.join("\n")+"\n";
+  const objects=[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    `<< /Length ${new TextEncoder().encode(stream).length} >>\\nstream\\n${stream}endstream`
+  ];
+  let pdf="%PDF-1.4\n"; const offsets=[0];
+  for(let i=0;i<objects.length;i++){offsets.push(new TextEncoder().encode(pdf).length);pdf+=`${i+1} 0 obj\n${objects[i]}\nendobj\n`;}
+  const xref=new TextEncoder().encode(pdf).length;
+  pdf+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;
+  for(let i=1;i<offsets.length;i++) pdf+=String(offsets[i]).padStart(10,"0")+" 00000 n \n";
+  pdf+=`trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   return new TextEncoder().encode(pdf);
 }
-__name(makeSimplePdf, "makeSimplePdf");
+__name(makeProfessionalPdf, "makeProfessionalPdf");
 async function publicMedia(request, env, key) {
   if (!env.MEDIA) return new Response("R2 not configured", { status: 503 });
   if (!key || !key.startsWith("media/")) return new Response("Not found", { status: 404 });
@@ -552,21 +617,15 @@ __name(adminMedia, "adminMedia");
 async function documentPdf(request, env, type, orderId) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
-  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=? OR o.order_number=?`).bind(orderId, orderId).first();
+  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=?`).bind(orderId, orderId).first();
   if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(env));
-  const items = (await env.DB.prepare("SELECT * FROM order_items WHERE order_id=? ORDER BY rowid").bind(orderId).all()).results || [];
-  const lines = [`Order: ${order.order_number}`, `Date: ${order.created_at}`, `Customer: ${order.first_name || ""} ${order.last_name || ""}`.trim(), `Email: ${order.email || ""}`, `Currency: ${order.original_currency}`];
-  for (const item of items) lines.push(`${item.product_name} x${item.quantity} @ ${item.unit_price} = ${item.total_price} ${item.currency}`);
-  if (type === "invoice") lines.push(`Shipping: ${order.shipping_amount}`, `Total: ${order.total_amount} ${order.original_currency}`, `Payment: ${order.payment_status}`);
-  else lines.push(`Packages: 1`, `Status: Packing pending`, `Destination: ${order.shipping_address_json || ""}`);
-  const title = type === "invoice" ? "PALMA ROTAN - INVOICE" : "PALMA ROTAN - PACKING LIST";
-  const bytes = makeSimplePdf(title, lines);
+  const items = (await env.DB.prepare("SELECT * FROM order_items WHERE order_id=? ORDER BY rowid").bind(order.id).all()).results || [];
+  const bytes = makeProfessionalPdf(type, order, items);
   if (env.MEDIA) {
     const key = `documents/${type}/${order.order_number}.pdf`;
     await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "application/pdf", cacheControl: "private, no-store" } });
     const table = type === "invoice" ? "invoices" : "packing_orders";
-    const col = type === "invoice" ? "pdf_key" : "pdf_key";
-    await env.DB.prepare(`UPDATE ${table} SET ${col}=? WHERE order_id=?`).bind(key, orderId).run();
+    await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key, order.id).run();
   }
   return new Response(bytes, { status: 200, headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${type}-${order.order_number}.pdf"`, "cache-control": "no-store", "access-control-allow-origin": cors(env) } });
 }
