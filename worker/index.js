@@ -199,18 +199,36 @@ async function createOrder(request, env) {
   const shipping = Math.max(0, Number(body.shippingAmount) || 0);
   const orderId = id("ord");
   const orderNumber = `PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-  const customerId = id("cus");
+  const customerEmail = String(body.customer?.email || "").trim().toLowerCase() || null;
+  let customerId = null;
+  if (customerEmail) {
+    const existingCustomer = await env.DB.prepare("SELECT id FROM customers WHERE email=? LIMIT 1").bind(customerEmail).first();
+    customerId = existingCustomer?.id || null;
+  }
+  if (!customerId) customerId = id("cus");
   const setting = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key='usdToIdrRate'`).first();
   const rate = parseSettingNumber(setting?.value_json, 16000);
   const total = subtotal + shipping;
   const adminTotalIdr = Math.round(currency === "USD" ? total * rate : total);
   if (!Number.isFinite(adminTotalIdr) || adminTotalIdr <= 0) return json({ error: "Total order tidak valid" }, 500, cors(env));
 
-  await env.DB.batch([
-    env.DB.prepare(`INSERT INTO customers(id,email,first_name,last_name,phone,country) VALUES(?,?,?,?,?,?)`).bind(
-      customerId, body.customer?.email || null, body.customer?.firstName || "", body.customer?.lastName || "",
-      body.customer?.phone || "", body.customer?.country || ""
-    ),
+  const statements = [];
+  if (customerId.startsWith("cus_")) {
+    statements.push(
+      env.DB.prepare(`INSERT INTO customers(id,email,first_name,last_name,phone,country) VALUES(?,?,?,?,?,?)`).bind(
+        customerId, customerEmail, body.customer?.firstName || "", body.customer?.lastName || "",
+        body.customer?.phone || "", body.customer?.country || ""
+      )
+    );
+  } else {
+    statements.push(
+      env.DB.prepare(`UPDATE customers SET first_name=?,last_name=?,phone=?,country=? WHERE id=?`).bind(
+        body.customer?.firstName || "", body.customer?.lastName || "",
+        body.customer?.phone || "", body.customer?.country || "", customerId
+      )
+    );
+  }
+  statements.push(
     env.DB.prepare(`INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_address_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(
       orderId, orderNumber, customerId, currency, subtotal, shipping, total, rate, adminTotalIdr,
       body.shippingMethod || "", JSON.stringify(body.shippingAddress || {})
@@ -221,7 +239,8 @@ async function createOrder(request, env) {
     env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(
       id("hist"), orderId, "NEW", "Order dibuat melalui checkout"
     )
-  ]);
+  );
+  await env.DB.batch(statements);
 
   const requestedGateway = String(body.paymentGateway || body.paymentMethod || "").toLowerCase();
   const useMidtrans = ["gateway", "midtrans", "snap", "payment gateway"].includes(requestedGateway);
