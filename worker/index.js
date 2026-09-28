@@ -277,11 +277,22 @@ async function createOrder(request, env) {
   return json({ orderId, orderNumber, currency, subtotal, total, adminTotalIdr }, 201, cors(env));
 }
 __name(createOrder, "createOrder");
-async function adminOrders(request, env) {
+async async function adminOrders(request, env) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
-  const rows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.created_at DESC`).all();
-  return json({ orders: rows.results || [] }, 200, cors(env));
+  const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
+  const orders = orderRows.results || [];
+  if (!orders.length) return json({ orders: [] }, 200, cors(env));
+  const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
+  const paymentRows = await env.DB.prepare(`SELECT order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at,created_at FROM payments ORDER BY created_at DESC`).all();
+  const itemsByOrder = new Map();
+  for (const item of itemRows.results || []) {
+    if (!itemsByOrder.has(item.order_id)) itemsByOrder.set(item.order_id, []);
+    itemsByOrder.get(item.order_id).push({id:item.id,product_id:item.product_id,name:item.product_name,product_name:item.product_name,qty:Number(item.quantity)||0,quantity:Number(item.quantity)||0,price:Number(item.unit_price)||0,unit_price:Number(item.unit_price)||0,total_price:Number(item.total_price)||0,currency:item.currency,weight_kg:Number(item.weight_kg)||0,dimensions_cm:item.dimensions_cm||""});
+  }
+  const paymentByOrder = new Map();
+  for (const payment of paymentRows.results || []) if (!paymentByOrder.has(payment.order_id)) paymentByOrder.set(payment.order_id, payment);
+  return json({orders:orders.map(order=>{const payment=paymentByOrder.get(order.id)||null;return {...order,items:itemsByOrder.get(order.id)||[],payment_method:payment?.method||null,payment_provider:payment?.provider||null,payment_transaction_id:payment?.provider_transaction_id||null,payment_reference:payment?.provider_transaction_id||null,paid_at:payment?.verified_at||null};})},200,cors(env));
 }
 __name(adminOrders, "adminOrders");
 async function hmacHex(secret, value) {
@@ -538,9 +549,16 @@ function makeProfessionalPdf(type, order, items) {
   text(54, 621, (`${order.first_name || ""} ${order.last_name || ""}`.trim() || "-").slice(0,36), 10, "F2");
   text(54, 606, "Email: " + (order.email || "-"), 7.5, "F1", muted);
   text(320, 638, "PENGIRIMAN", 8, "F2", muted);
-  const addr = order.shipping_address_json || "-";
-  text(320, 621, "Alamat: " + wrap(addr, 31)[0], 8, "F1");
-  if(wrap(addr,31)[1]) text(320,606,wrap(addr,31)[1],7.5,"F1",muted);
+  let addressText = "-";
+  try {
+    const parsedAddress = JSON.parse(order.shipping_address_json || "{}");
+    addressText = [parsedAddress.address,parsedAddress.city,parsedAddress.state,parsedAddress.postalCode,parsedAddress.country].filter(Boolean).join(", ") || "-";
+  } catch (_) {
+    addressText = String(order.shipping_address_json || "-");
+  }
+  const addressLines = wrap(addressText,31);
+  text(320,621,"Alamat: "+addressLines[0],8,"F1");
+  if(addressLines[1]) text(320,606,addressLines[1],7.5,"F1",muted);
 
   if(type === "invoice"){
     roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
@@ -695,17 +713,21 @@ __name(adminMedia, "adminMedia");
 async function documentPdf(request, env, type, orderId) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
-  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=?`).bind(orderId, orderId).first();
-  if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(env));
-  const items = (await env.DB.prepare("SELECT * FROM order_items WHERE order_id=? ORDER BY rowid").bind(order.id).all()).results || [];
+  let ref = String(orderId || "").trim();
+  try { ref = decodeURIComponent(ref); } catch (_) {}
+  ref = ref.replace(/^#/, "").trim();
+  if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(env));
+  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(env));
+  const items = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid").bind(order.id).all()).results || [];
   const bytes = makeProfessionalPdf(type, order, items);
   if (env.MEDIA) {
     const key = `documents/${type}/${order.order_number}.pdf`;
-    await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "application/pdf", cacheControl: "private, no-store" } });
+    await env.MEDIA.put(key, bytes, {httpMetadata:{contentType:"application/pdf",cacheControl:"private, no-store"}});
     const table = type === "invoice" ? "invoices" : "packing_orders";
-    await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key, order.id).run();
+    await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key,order.id).run();
   }
-  return new Response(bytes, { status: 200, headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${type}-${order.order_number}.pdf"`, "cache-control": "no-store", "access-control-allow-origin": cors(env) } });
+  return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(env),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret"}});
 }
 __name(documentPdf, "documentPdf");
 async function adminSettings(request, env) {
