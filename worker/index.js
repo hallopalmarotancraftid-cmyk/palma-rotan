@@ -631,7 +631,9 @@ function makeProfessionalPdf(type, order, items) {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>",
-    `<< /Length ${new TextEncoder().encode(stream).length} >>\\nstream\\n${stream}endstream`
+    `<< /Length ${new TextEncoder().encode(stream).length} >>
+stream
+${stream}endstream`
   ];
   let pdf="%PDF-1.4\n"; const offsets=[0];
   for(let i=0;i<objects.length;i++){offsets.push(new TextEncoder().encode(pdf).length);pdf+=`${i+1} 0 obj\n${objects[i]}\nendobj\n`;}
