@@ -466,7 +466,7 @@ function safePdfText(value) {
   return String(value ?? "").replace(/[^\x20-\x7E]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 __name(safePdfText, "safePdfText");
-function makeProfessionalPdf(type, order, items) {
+function makeProfessionalPdf(type, order, items, branding = {}) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
   const commands = [];
@@ -520,15 +520,24 @@ function makeProfessionalPdf(type, order, items) {
   // Paper background and top brand band.
   commands.push(`q ${cream} rg 0 0 ${W} ${H} re f Q`);
   commands.push(`q 0.985 0.975 0.95 rg 0 ${H-108} ${W} 108 re f Q`);
+  const brand = String(branding.brand || "PALMA ROTAN").trim() || "PALMA ROTAN";
+  const brandWords = brand.split(/\s+/);
+  const brandLine1 = brandWords.slice(0, Math.max(1, Math.ceil(brandWords.length / 2))).join(" ");
+  const brandLine2 = brandWords.slice(Math.max(1, Math.ceil(brandWords.length / 2))).join(" ");
+  const tagline1 = String(branding.pdfTagline1 || "NATURAL CRAFT");
+  const tagline2 = String(branding.pdfTagline2 || "TIMELESS BEAUTY");
+  const website = String(branding.website || "palmarotancraft.id");
+  const phone = String(branding.whatsapp || "");
+  const address = String(branding.address || "");
   palmLogo(M, 760, 0.62);
-  text(88, 795, "PALMA", 25, "F2");
-  text(88, 770, "ROTAN", 25, "F2");
+  text(88, 795, brandLine1.slice(0, 18), 25, "F2");
+  if (brandLine2) text(88, 770, brandLine2.slice(0, 18), 25, "F2");
   line(205, 772, 205, 808, 0.8, tan);
-  text(220, 797, "NATURAL CRAFT", 8, "F2", muted);
-  text(220, 783, "TIMELESS BEAUTY", 8, "F1", muted);
-  text(410, 800, "palmarotancraft.id", 7, "F1", muted);
-  text(410, 785, "+62 812 3456 7890", 7, "F1", muted);
-  text(410, 770, "Yogyakarta, Indonesia", 7, "F1", muted);
+  text(220, 797, tagline1.slice(0, 24), 8, "F2", muted);
+  text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
+  text(410, 800, website.slice(0, 30), 7, "F1", muted);
+  if (phone) text(410, 785, phone.slice(0, 30), 7, "F1", muted);
+  if (address) text(410, 770, address.slice(0, 30), 7, "F1", muted);
   line(M, 748, W-M, 748, 1.2, brown);
 
   // Document title and metadata.
@@ -720,7 +729,13 @@ async function documentPdf(request, env, type, orderId) {
   const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(env));
   const items = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid").bind(order.id).all()).results || [];
-  const bytes = makeProfessionalPdf(type, order, items);
+  const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
+  const branding = Object.fromEntries((brandRows.results || []).map((row) => {
+    let value = row.value_json;
+    try { value = JSON.parse(value); } catch (_) {}
+    return [row.key, value];
+  }));
+  const bytes = makeProfessionalPdf(type, order, items, branding);
   if (env.MEDIA) {
     const key = `documents/${type}/${order.order_number}.pdf`;
     await env.MEDIA.put(key, bytes, {httpMetadata:{contentType:"application/pdf",cacheControl:"private, no-store"}});
