@@ -459,102 +459,178 @@ function makeProfessionalPdf(type, order, items) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
   const commands = [];
+  const brown = "0.24 0.12 0.06";
+  const tan = "0.72 0.55 0.35";
+  const cream = "0.965 0.945 0.91";
+  const muted = "0.42 0.36 0.30";
+
   const money = (n, currency) => {
     const v = Number(n) || 0;
     return currency === "IDR"
       ? "Rp " + new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(v)
       : "$ " + new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
   };
-  const text = (x, y, value, size = 10, font = "F1") => {
-    commands.push("BT", `/${font} ${size} Tf`, `1 0 0 1 ${x} ${y} Tm`, `(${esc(value)}) Tj`, "ET");
+  const text = (x, y, value, size = 10, font = "F1", color = brown) => {
+    commands.push(color + " rg", "BT", `/${font} ${size} Tf`, `1 0 0 1 ${x} ${y} Tm`, `(${esc(value)}) Tj`, "ET");
   };
-  const line = (x1,y1,x2,y2,width=1) => commands.push(`${width} w`,`${x1} ${y1} m ${x2} ${y2} l S`);
-  const rect = (x,y,w,h,fill=false) => commands.push(fill ? `q 0.965 0.945 0.92 rg ${x} ${y} ${w} ${h} re f Q` : `q 0.82 0.78 0.72 RG ${x} ${y} ${w} ${h} re S Q`);
-  const wrap = (value, max=58) => {
-    const words = String(value ?? "").split(/\\s+/); const out=[]; let cur="";
+  const line = (x1,y1,x2,y2,width=0.7,color=tan) => commands.push(color + " RG", `${width} w`,`${x1} ${y1} m ${x2} ${y2} l S`);
+  const rect = (x,y,w,h,fill=false,color=cream) => commands.push(fill ? `q ${color} rg ${x} ${y} ${w} ${h} re f Q` : `q ${tan} RG 0.55 w ${x} ${y} ${w} ${h} re S Q`);
+  const roundRect = (x,y,w,h,fill=false,color=cream) => {
+    const r=5,k=0.5522848*r;
+    const p=[`q ${fill?color+" rg":tan+" RG"} 0.6 w`,
+      `${x+r} ${y} m ${x+w-r} ${y} l`,
+      `${x+w-k} ${y} ${x+w} ${y+r-k} ${x+w} ${y+r} c`,
+      `${x+w} ${y+h-r} l`,
+      `${x+w} ${y+h-r+k} ${x+w-k} ${y+h} ${x+w-r} ${y+h} c`,
+      `${x+r} ${y+h} l`,
+      `${x+r-k} ${y+h} ${x} ${y+h-r+k} ${x} ${y+h-r} c`,
+      `${x} ${y+r} l`,
+      `${x} ${y+r-k} ${x+r-k} ${y} ${x+r} ${y} c`,
+      "S Q"]; 
+    if(fill) p[p.length-1]="f Q";
+    commands.push(...p);
+  };
+  const wrap = (value, max=56) => {
+    const words=String(value ?? "").replace(/\s+/g," ").trim().split(" ");
+    const out=[]; let cur="";
     for(const word of words){ const next=cur?cur+" "+word:word; if(next.length>max&&cur){out.push(cur);cur=word}else cur=next; }
-    if(cur) out.push(cur); return out.length?out:[""];
+    if(cur) out.push(cur); return out.length?out:["-"];
+  };
+  const palmLogo = (x,y,scale=1) => {
+    commands.push(`${brown} RG ${brown} rg 1.5 w`);
+    commands.push(`${x+10*scale} ${y} m ${x+15*scale} ${y+38*scale} ${x+22*scale} ${y+58*scale} ${x+31*scale} ${y+72*scale} c S`);
+    commands.push(`${x+10*scale} ${y} m ${x+30*scale} ${y-2*scale} ${x+38*scale} ${y+2*scale} ${x+42*scale} ${y+6*scale} c S`);
+    for(const leaf of [[31,72,0],[31,72,45],[31,72,90],[31,72,135],[31,72,180],[31,72,225],[31,72,270]]){
+      const a=leaf[2]*Math.PI/180, ex=31+34*Math.cos(a), ey=72+18*Math.sin(a);
+      commands.push(`${x+31*scale} ${y+72*scale} m ${x+ex*scale} ${y+ey*scale} l S`);
+    }
   };
 
-  // Header
-  text(M, 792, "PALMA ROTAN", 22, "F2");
-  text(M, 775, "RATTAN CRAFT • INDONESIA", 8, "F1");
-  text(430, 792, type === "invoice" ? "INVOICE" : "PACKING LIST", 18, "F2");
-  text(430, 776, `Order #${order.order_number}`, 9, "F1");
-  line(M, 758, W-M, 758, 1.6);
+  // Paper background and top brand band.
+  commands.push(`q ${cream} rg 0 0 ${W} ${H} re f Q`);
+  commands.push(`q 0.985 0.975 0.95 rg 0 ${H-108} ${W} 108 re f Q`);
+  palmLogo(M, 760, 0.62);
+  text(88, 795, "PALMA", 25, "F2");
+  text(88, 770, "ROTAN", 25, "F2");
+  line(205, 772, 205, 808, 0.8, tan);
+  text(220, 797, "NATURAL CRAFT", 8, "F2", muted);
+  text(220, 783, "TIMELESS BEAUTY", 8, "F1", muted);
+  text(410, 800, "palmarotancraft.id", 7, "F1", muted);
+  text(410, 785, "+62 812 3456 7890", 7, "F1", muted);
+  text(410, 770, "Yogyakarta, Indonesia", 7, "F1", muted);
+  line(M, 748, W-M, 748, 1.2, brown);
 
-  // Meta cards
-  rect(M, 680, 247, 58);
-  rect(306, 680, 247, 58);
-  text(54, 720, "BILL TO", 8, "F2");
-  text(54, 704, `${order.first_name || ""} ${order.last_name || ""}`.trim() || "-", 11, "F2");
-  text(54, 689, order.email || "-", 8, "F1");
-  text(322, 720, "DOCUMENT", 8, "F2");
-  text(322, 704, type === "invoice" ? (order.invoice_number || "Invoice") : (order.packing_number || "Packing"), 10, "F2");
-  text(322, 689, `Date: ${order.created_at || "-"}`, 8, "F1");
+  // Document title and metadata.
+  text(M, 710, type === "invoice" ? "INVOICE" : "PACKING LIST", 25, "F3");
+  text(M, 690, type === "invoice" ? "Faktur Pembelian" : "Daftar Kemasan Pengiriman", 9, "F1", muted);
+  const docNo = type === "invoice" ? (order.invoice_number || "-") : (order.packing_number || "-");
+  text(350, 714, type === "invoice" ? "No. Invoice" : "No. Packing", 8, "F2", muted);
+  text(430, 714, docNo, 8, "F1");
+  text(350, 696, "No. Order", 8, "F2", muted);
+  text(430, 696, order.order_number || "-", 8, "F1");
+  text(350, 678, "Tanggal", 8, "F2", muted);
+  text(430, 678, String(order.created_at || "-").replace("T"," ").slice(0,19), 8, "F1");
 
-  let y=650;
+  // Customer / destination cards.
+  roundRect(M, 595, 245, 61, false);
+  roundRect(308, 595, 245, 61, false);
+  text(54, 638, "KEPADA", 8, "F2", muted);
+  text(54, 621, (`${order.first_name || ""} ${order.last_name || ""}`.trim() || "-").slice(0,36), 10, "F2");
+  text(54, 606, "Email: " + (order.email || "-"), 7.5, "F1", muted);
+  text(320, 638, "PENGIRIMAN", 8, "F2", muted);
+  const addr = order.shipping_address_json || "-";
+  text(320, 621, "Alamat: " + wrap(addr, 31)[0], 8, "F1");
+  if(wrap(addr,31)[1]) text(320,606,wrap(addr,31)[1],7.5,"F1",muted);
+
   if(type === "invoice"){
-    text(M,y,"PAYMENT STATUS",8,"F2");
-    text(M,y-17,String(order.payment_status || "PENDING"),11,"F2");
-    text(306,y,"CURRENCY",8,"F2");
-    text(306,y-17,String(order.original_currency || "USD"),11,"F2");
-    y-=48;
+    roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
+    text(55, 559, "PEMBAYARAN: " + String(order.payment_status || "PENDING"), 8, "F2", brown);
+    roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
+    text(182, 559, "MATA UANG: " + String(order.original_currency || "USD"), 8, "F2", brown);
   } else {
-    text(M,y,"PACKING STATUS",8,"F2");
-    text(M,y-17,"PENDING",11,"F2");
-    text(306,y,"PACKAGES",8,"F2");
-    text(306,y-17,"1",11,"F2");
-    y-=48;
+    roundRect(M, 550, 118, 27, true, "0.94 0.90 0.84");
+    text(55, 559, "PAKET: 1", 8, "F2", brown);
+    roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
+    text(182, 559, "STATUS: PENDING", 8, "F2", brown);
   }
 
-  // Items table
-  rect(M, y-28, W-2*M, 28, true);
-  text(50,y-18,"ITEM",8,"F2"); text(380,y-18,"QTY",8,"F2"); text(425,y-18,"UNIT PRICE",8,"F2"); text(505,y-18,"AMOUNT",8,"F2");
-  y-=46;
-  for(const item of items){
-    const nameLines=wrap(item.product_name || "Product", 48);
-    const rowH=Math.max(28,nameLines.length*12+12);
-    let yy=y;
-    for(const nl of nameLines){ text(50,yy,nl,9,"F1"); yy-=12; }
-    text(390,y,String(item.quantity || 0),9,"F1");
-    text(425,y,money(item.unit_price,item.currency),8,"F1");
-    text(505,y,money(item.total_price,item.currency),8,"F1");
-    line(M,y-rowH+5,W-M,y-rowH+5,0.5);
-    y-=rowH;
-    if(y<250) break;
+  // Table.
+  let y=520;
+  const cols = type === "invoice"
+    ? [M,70,350,415,490,W-M]
+    : [M,70,350,405,465,525,W-M];
+  rect(M,y-24,W-2*M,24,true,"0.90 0.85 0.77");
+  if(type === "invoice"){
+    text(49,y-16,"NO",7.5,"F2");
+    text(82,y-16,"PRODUK",7.5,"F2");
+    text(365,y-16,"QTY",7.5,"F2");
+    text(423,y-16,"HARGA",7.5,"F2");
+    text(497,y-16,"JUMLAH",7.5,"F2");
+  } else {
+    text(49,y-16,"NO",7.5,"F2");
+    text(82,y-16,"PRODUK",7.5,"F2");
+    text(363,y-16,"QTY",7.5,"F2");
+    text(417,y-16,"BERAT",7.5,"F2");
+    text(477,y-16,"DIMENSI",7.5,"F2");
+    text(535,y-16,"KET.",7.5,"F2");
   }
+  y-=24;
+  items.forEach((item,index)=>{
+    const name=wrap(item.product_name || "Product", type==="invoice"?35:30);
+    const rowH=Math.max(38,name.length*10+14);
+    line(M,y-rowH,W-M,y-rowH,0.45,tan);
+    text(50,y-18,String(index+1),8,"F1");
+    let yy=y-13;
+    for(const n of name.slice(0,3)){ text(82,yy,n,8,"F1"); yy-=10; }
+    text(type==="invoice"?365:363,y-18,String(item.quantity || 0),8,"F1");
+    if(type==="invoice"){
+      text(423,y-18,money(item.unit_price,item.currency),7.2,"F1");
+      text(497,y-18,money(item.total_price,item.currency),7.2,"F1");
+    } else {
+      text(417,y-18,Number(item.weight_kg||0).toFixed(1)+" kg",7.2,"F1");
+      text(477,y-18, item.dimensions_cm || "-",6.8,"F1");
+      text(535,y-18,"Rattan",6.8,"F1");
+    }
+    y-=rowH;
+  });
 
   if(type==="invoice"){
-    const subtotal=Number(order.original_amount)||0;
-    const shipping=Number(order.shipping_amount)||0;
-    const total=Number(order.total_amount)||0;
-    const cur=order.original_currency||"USD";
-    y=Math.max(y-10,235);
-    const sx=365;
-    text(sx,y,"Subtotal",9,"F1"); text(505,y,money(subtotal,cur),9,"F1");
-    text(sx,y-20,"Shipping",9,"F1"); text(505,y-20,money(shipping,cur),9,"F1");
-    line(sx,y-30,W-M,y-30,1);
-    text(sx,y-50,"TOTAL",11,"F2"); text(490,y-50,money(total,cur),11,"F2");
-    text(M,185,"PAYMENT",8,"F2");
-    text(M,169,order.payment_status || "PENDING",10,"F2");
+    const subtotal=Number(order.original_amount)||0, shipping=Number(order.shipping_amount)||0, total=Number(order.total_amount)||0, cur=order.original_currency||"USD";
+    const sx=350; y=Math.max(y-8,245);
+    text(sx,y,"Subtotal",8.5,"F1",muted); text(490,y,money(subtotal,cur),8.5,"F1");
+    text(sx,y-18,"Pengiriman",8.5,"F1",muted); text(490,y-18,money(shipping,cur),8.5,"F1");
+    line(sx,y-28,W-M,y-28,0.8,tan);
+    roundRect(sx,y-62,W-M-sx,30,true,"0.86 0.78 0.66");
+    text(sx+10,y-51,"TOTAL PEMBAYARAN",9,"F2");
+    text(482,y-51,money(total,cur),9,"F2");
+    text(M,205,"Metode Pembayaran",8,"F2",muted);
+    text(M,189,"Midtrans / Payment Gateway",8.5,"F1");
   } else {
-    text(M,185,"DESTINATION",8,"F2");
-    const destination=wrap(order.shipping_address_json || "-", 80);
-    let yy=169; for(const l of destination.slice(0,3)){text(M,yy,l,9,"F1");yy-=12;}
+    const dy=Math.max(y-8,235);
+    text(M,dy,"INFORMASI PENGIRIMAN",8,"F2",muted);
+    text(M,dy-17,"Kurir: " + (order.shipping_method || "-"),8,"F1");
+    text(M,dy-32,"No. Resi: -",8,"F1");
+    text(310,dy,"RINGKASAN KEMASAN",8,"F2",muted);
+    text(310,dy-17,"Jumlah Paket: 1",8,"F1");
+    text(310,dy-32,"Status: Packing pending",8,"F1");
   }
 
-  line(M,92,W-M,92,0.8);
-  text(M,72,"Thank you for choosing PALMA ROTAN.",8,"F1");
-  text(380,72,"palma-rotan.pages.dev",8,"F1");
+  // Footer.
+  line(M,92,W-M,92,0.8,tan);
+  palmLogo(M, 52, 0.25);
+  text(68,67,"Kerajinan Tangan",7,"F2",muted);
+  text(68,56,"Bahan Alami • Ramah Lingkungan",6.5,"F1",muted);
+  text(390,67,"PALMA ROTAN",8,"F2");
+  text(390,54,"Natural Craft • Timeless Beauty",6.5,"F1",muted);
 
   const stream=commands.join("\n")+"\n";
   const objects=[
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>",
     `<< /Length ${new TextEncoder().encode(stream).length} >>\\nstream\\n${stream}endstream`
   ];
   let pdf="%PDF-1.4\n"; const offsets=[0];
