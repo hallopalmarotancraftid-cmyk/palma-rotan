@@ -277,7 +277,7 @@ async function createOrder(request, env) {
   return json({ orderId, orderNumber, currency, subtotal, total, adminTotalIdr }, 201, cors(env));
 }
 __name(createOrder, "createOrder");
-async async function adminOrders(request, env) {
+async function adminOrders(request, env) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
