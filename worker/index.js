@@ -203,7 +203,7 @@ async function createOrder(request, env) {
   let customerId = null;
   let isNewCustomer = false;
   if (customerEmail) {
-    const existingCustomer = await env.DB.prepare("SELECT id FROM customers WHERE email=? LIMIT 1").bind(customerEmail).first();
+    const existingCustomer = await env.DB.prepare("SELECT id FROM customers WHERE lower(email)=? LIMIT 1").bind(customerEmail).first();
     customerId = existingCustomer?.id || null;
   }
   if (!customerId) {
