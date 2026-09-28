@@ -216,7 +216,7 @@ async function createOrder(fd){
         shippingAmount:shipping,
         shippingMethod:fd.get('method'),
         shippingAddress:{country:fd.get('country'),address:fd.get('address')},
-        customer:{firstName:fd.get('name'),lastName:'',email:fd.get('email'),phone:fd.get('wa'),country:fd.get('country')}
+        customer:{firstName:fd.get('name'),lastName:'',email:fd.get('email'),phone:fd.get('wa'),country:fd.get('country')},paymentMethod:fd.get('payment')||'gateway',paymentGateway:fd.get('payment')||'gateway'
       };
       const r=await fetch(api+'/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
       const j=await r.json().catch(()=>({}));
