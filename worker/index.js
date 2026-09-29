@@ -174,6 +174,23 @@ async function adminProducts(request, env) {
   return json({ ok: true, id: productId }, 200, cors(env));
 }
 __name(adminProducts, "adminProducts");
+
+function code128Widths(value){const text=String(value??"").replace(/[^\x20-\x7E]/g,"").slice(0,120);const patterns=["212222","222122","222221","121223","121322","131222","122213","122312","132212","221213","221312","231212","112232","122132","122231","113222","123122","123221","223211","221132","221231","213212","223112","312131","311222","321122","321221","312212","322112","322211","212123","212321","232121","111323","131123","131321","112313","132113","132311","211313","231113","231311","112133","112331","132131","113123","113321","133121","313121","211331","231131","213113","213311","213131","311123","311321","331121","312113","312311","332111","314111","221411","431111","111224","111422","121124","121421","141122","141221","112214","112412","122114","122411","142112","142211","241211","221114","413111","241112","134111","111242","121142","121241","114212","124112","124211","411212","421112","421211","212141","214121","412121","111143","111341","131141","114113","114311","411113","411311","113141","114131","311141","411131","211412","211214","211232","2331112"];const codes=[104];let checksum=104;for(let i=0;i<text.length;i++){const code=text.charCodeAt(i)-32;codes.push(code);checksum+=code*(i+1)}codes.push(checksum%103,106);return codes.map(c=>patterns[c]).join("")}
+__name(code128Widths,"code128Widths");
+function drawCode128(commands,x,y,maxWidth,height,value,color="0 0 0"){const widths=code128Widths(value),modules=[...widths].reduce((n,c)=>n+Number(c),0),unit=Math.min(1.15,maxWidth/modules);let cursor=x,bar=true;commands.push(color+" rg");for(const ch of widths){const ww=Number(ch)*unit;if(bar)commands.push("q "+cursor+" "+y+" "+ww+" "+height+" re f Q");cursor+=ww;bar=!bar}return cursor}
+__name(drawCode128,"drawCode128");
+function bytesToBase64(bytes){const arr=new Uint8Array(bytes);let out="";for(let i=0;i<arr.length;i+=0x8000)out+=String.fromCharCode(...arr.subarray(i,Math.min(i+0x8000,arr.length)));return btoa(out)}
+__name(bytesToBase64,"bytesToBase64");
+function trackingBase(env){return String(env.PUBLIC_SITE_URL||"https://palma-rotan.pages.dev").replace(/\/$/,"")}
+__name(trackingBase,"trackingBase");
+function trackingUrl(order,env){return trackingBase(env)+"/track/"+encodeURIComponent(order.order_number||"")+"/"+encodeURIComponent(order.auth_code||"")}
+__name(trackingUrl,"trackingUrl");
+async function ensurePackingAuth(orderId,env){const row=await env.DB.prepare("SELECT * FROM packing_orders WHERE order_id=?").bind(orderId).first();if(!row)return null;if(row.auth_code)return row;const authCode=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16);await env.DB.prepare("UPDATE packing_orders SET auth_code=? WHERE order_id=?").bind(authCode,orderId).run();return {...row,auth_code:authCode}}
+__name(ensurePackingAuth,"ensurePackingAuth");
+function escEmail(value){return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
+__name(escEmail,"escEmail");
+async function sendOrderDocumentsEmail(order,items,branding,env){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack},track=trackingUrl(enriched,env),brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":"order-documents-"+order.id},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
+__name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 async function createOrder(request, env) {
   const body = await request.json();
   if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Keranjang kosong" }, 400, cors(env));
@@ -280,7 +297,7 @@ __name(createOrder, "createOrder");
 async function adminOrders(request, env) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
-  const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
+  const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
   const orders = orderRows.results || [];
   if (!orders.length) return json({ orders: [] }, 200, cors(env));
   const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
@@ -357,7 +374,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     env.DB.prepare(`UPDATE orders SET payment_status='PAID',order_status='PROCESSING',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(orderId),
     env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(id("hist"), orderId, "PROCESSING", "Pembayaran terverifikasi; stok dikurangi otomatis"),
     env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"), orderId, invoiceNo),
-    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,created_at) VALUES(?,?,?,'PENDING',CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo),
+    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,created_at) VALUES(?,?,?,'PENDING',?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16)),
     env.DB.prepare(`INSERT INTO payment_audit(id,order_id,payment_id,actor,action,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
       id("pa"), orderId, paymentId, actor, "PAYMENT_VERIFIED",
       JSON.stringify({ provider: isMidtrans ? "midtrans" : "manual", method: payment.method || null, providerTransactionId: payment.providerTransactionId || null })
@@ -369,6 +386,8 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     console.error("PAYMENT_BATCH_ROLLBACK", { orderId, message: error?.message || String(error) });
     return { ok: false, status: 409, error: "Stok berubah atau transaksi pembayaran tidak dapat diproses" };
   }
+  const paidOrder=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.auth_code,pk.courier,pk.tracking_number,pk.tracking_url FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(orderId).first();
+  if(paidOrder?.email){try{const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));await sendOrderDocumentsEmail(paidOrder,items,branding,env)}catch(error){console.error("ORDER_DOCUMENT_EMAIL_ERROR",{orderId,message:error?.message||String(error)});await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),orderId).run().catch(()=>{})}}
   return { ok: true, alreadyPaid: false, invoiceNo, packingNo };
 }
 __name(markOrderPaid, "markOrderPaid");
@@ -406,6 +425,9 @@ async function adminVerifyPayment(request, env) {
   return json(result, 200, cors(env));
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
+
+async function adminShipping(request,env){const admin=await requireAdmin(request,env);if(!admin)return json({error:"Unauthorized"},401,cors(env));const body=await request.json().catch(()=>({}));if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(env));const order=await env.DB.prepare("SELECT id,order_number,order_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(body.orderId,body.orderId).first();if(!order)return json({error:"Order tidak ditemukan"},404,cors(env));const pack=await ensurePackingAuth(order.id,env);if(!pack)return json({error:"Packing order belum tersedia"},409,cors(env));const status=String(body.status||pack.status||"PENDING").toUpperCase(),allowed=["PENDING","PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(env));const trackingNumber=String(body.trackingNumber||"").trim()||null,courier=String(body.courier||"").trim()||null,trackingUrlValue=String(body.trackingUrl||"").trim()||null;await env.DB.prepare("UPDATE packing_orders SET courier=?,tracking_number=?,tracking_url=?,status=?,shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END WHERE order_id=?").bind(courier,trackingNumber,trackingUrlValue,status,status,status,order.id).run();const orderStatus=status==="DELIVERED"?"DELIVERED":status==="SHIPPED"?"SHIPPED":status==="READY TO SHIP"?"READY TO SHIP":status==="PACKING"?"PACKING":order.order_status||"PROCESSING";await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(orderStatus,order.id).run();await env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),order.id,"Shipping update: "+(courier||"-")+" "+(trackingNumber||"-")).run();await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"UPDATE_SHIPPING","order",order.id,JSON.stringify({courier,trackingNumber,trackingUrl:trackingUrlValue,status})).run();return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env)},200,cors(env))}
+__name(adminShipping,"adminShipping");
 async function paymentWebhook(request, env) {
   const serverKey = String(env.MIDTRANS_SERVER_KEY || "").trim();
   if (!serverKey) return json({ error: "MIDTRANS_SERVER_KEY belum dikonfigurasi" }, 503, cors(env));
@@ -569,6 +591,11 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   text(320,621,"Alamat: "+addressLines[0],8,"F1");
   if(addressLines[1]) text(320,606,addressLines[1],7.5,"F1",muted);
 
+  if(type === "packing"){
+    roundRect(M, 550, 250, 27, true, "0.88 0.96 0.90");
+    text(55, 559, "RESI: " + String(order.tracking_number || "BELUM TERSEDIA").slice(0, 36), 8, "F2", brown);
+    if(order.courier) text(55, 544, "KURIR: " + String(order.courier).slice(0, 36), 7.5, "F1", muted);
+  }
   if(type === "invoice"){
     roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
     text(55, 559, "PEMBAYARAN: " + String(order.payment_status || "PENDING"), 8, "F2", brown);
@@ -641,6 +668,9 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(310,dy-17,"Jumlah Paket: 1",8,"F1");
     text(310,dy-32,"Status: Packing pending",8,"F1");
   }
+
+  const barcodeValue=String(order.tracking_link || "");
+  if(barcodeValue){drawCode128(commands,M,74,W-2*M,42,barcodeValue);text(M,58,"SCAN / AUTHENTICATE ORDER",7,"F2",muted);text(M,46,String(order.order_number||"").slice(0,42),7,"F1",muted)}
 
   // Footer.
   line(M,92,W-M,92,0.8,tan);
@@ -726,8 +756,11 @@ async function documentPdf(request, env, type, orderId) {
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(env));
-  const order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(env));
+  const ensuredPack=await ensurePackingAuth(order.id,env);
+  if(ensuredPack)order={...order,...ensuredPack};
+  order.tracking_link=trackingUrl(order,env);
   const items = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid").bind(order.id).all()).results || [];
   const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
   const branding = Object.fromEntries((brandRows.results || []).map((row) => {
@@ -778,6 +811,9 @@ async function publicSettings(request, env) {
 }
 
 __name(publicSettings, "publicSettings");
+
+async function publicTracking(request,env,orderNumber,authCode){const order=await env.DB.prepare("SELECT o.order_number,o.order_status,o.payment_status,o.created_at,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS shipping_status,pk.shipped_at,pk.delivered_at,pk.auth_code FROM orders o LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE lower(o.order_number)=lower(?) LIMIT 1").bind(orderNumber).first();if(!order||!order.auth_code||String(order.auth_code)!==String(authCode))return new Response("Tracking link tidak valid atau sudah tidak tersedia.",{status:404,headers:{"content-type":"text/html; charset=utf-8"}});const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email')").all(),b=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]})),safe=v=>escEmail(v),external=order.tracking_url?String(order.tracking_url):"";const html="<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>"+safe(b.brand||"PALMA ROTAN")+" — Tracking "+safe(order.order_number)+"</title><style>body{margin:0;background:#f5eee4;color:#211a15;font-family:Arial,sans-serif}.wrap{max-width:720px;margin:40px auto;padding:24px}.card{background:#fff;border:1px solid #dccbb6;border-radius:16px;padding:28px;box-shadow:0 12px 30px rgba(33,26,21,.08)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:22px}.item{border:1px solid #eadfd2;border-radius:10px;padding:14px}.muted{color:#6d6258}.status{font-weight:700}.btn{display:inline-block;margin-top:20px;padding:12px 18px;border-radius:8px;background:#211a15;color:#fff;text-decoration:none}@media(max-width:600px){.wrap{margin:12px auto;padding:12px}.grid{grid-template-columns:1fr}}</style></head><body><div class=\"wrap\"><div class=\"card\"><div class=\"muted\">"+safe(b.brand||"PALMA ROTAN")+"</div><h1>Tracking Pesanan</h1><p class=\"muted\">Order <b>"+safe(order.order_number)+"</b></p><div class=\"grid\"><div class=\"item\"><div class=\"muted\">Status Order</div><div class=\"status\">"+safe(order.order_status||"PROCESSING")+"</div></div><div class=\"item\"><div class=\"muted\">Status Pengiriman</div><div class=\"status\">"+safe(order.shipping_status||"PENDING")+"</div></div><div class=\"item\"><div class=\"muted\">Kurir</div><div class=\"status\">"+safe(order.courier||"Belum ditentukan")+"</div></div><div class=\"item\"><div class=\"muted\">Nomor Resi</div><div class=\"status\">"+safe(order.tracking_number||"Belum tersedia")+"</div></div><div class=\"item\"><div class=\"muted\">Packing List</div><div class=\"status\">"+safe(order.packing_number||"-")+"</div></div><div class=\"item\"><div class=\"muted\">Pembayaran</div><div class=\"status\">"+safe(order.payment_status||"PENDING")+"</div></div></div>"+(external?"<a class=\"btn\" href=\""+safe(external)+"\" target=\"_blank\" rel=\"noopener\">Buka Tracking Kurir</a>":"")+"<p class=\"muted\" style=\"margin-top:26px;font-size:12px\">Halaman ini menggunakan link autentikasi unik untuk pesanan.</p></div></div></body></html>";return new Response(html,{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"private, no-store"}})}
+__name(publicTracking,"publicTracking");
 var index_default = {
   
   async fetch(request, env) {
@@ -793,6 +829,9 @@ var index_default = {
     if (url.pathname === "/api/settings" && request.method === "GET") return publicSettings(request, env);
     if (url.pathname === "/api/orders" && request.method === "POST") return createOrder(request, env);
     if (url.pathname === "/api/admin/orders" && request.method === "GET") return adminOrders(request, env);
+    if (url.pathname === "/api/admin/shipping" && request.method === "POST") return adminShipping(request, env);
+    const trackMatch = url.pathname.match(/^\/track\/([^/]+)\/([^/]+)$/);
+    if (trackMatch && request.method === "GET") return publicTracking(request, env, decodeURIComponent(trackMatch[1]), decodeURIComponent(trackMatch[2]));
     if (url.pathname === "/api/admin/products" && ["GET", "POST", "PUT", "PATCH"].includes(request.method)) return adminProducts(request, env);
     if (url.pathname === "/api/payment/webhook" && request.method === "POST") return paymentWebhook(request, env);
     if (url.pathname === "/api/admin/payments/verify" && request.method === "POST") return adminVerifyPayment(request, env);
