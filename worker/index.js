@@ -2,14 +2,19 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var cors = /* @__PURE__ */ __name((_env) => "https://palma-rotan.pages.dev", "cors");
+var cors = /* @__PURE__ */ __name((request) => {
+  const origin = request?.headers?.get?.("origin") || "";
+  if (origin === "https://palma-rotan.pages.dev" || origin === "https://palmarotancraft-staging.pages.dev") return origin;
+  return "https://palma-rotan.pages.dev";
+}, "cors");
 var json = /* @__PURE__ */ __name((data, status = 200, origin = "*") => new Response(JSON.stringify(data), {
   status,
   headers: {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": origin,
     "access-control-allow-headers": "content-type, authorization, x-bootstrap-secret",
-    "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "vary": "Origin"
   }
 }), "json");
 var id = /* @__PURE__ */ __name((prefix = "id") => `${prefix}_${crypto.randomUUID()}`, "id");
@@ -127,33 +132,33 @@ async function requireAdmin(request, env) {
 __name(requireAdmin, "requireAdmin");
 async function login(request, env) {
   const body = await request.json();
-  if (!body.email || !body.password) return json({ error: "Email dan password wajib diisi" }, 400, cors(env));
+  if (!body.email || !body.password) return json({ error: "Email dan password wajib diisi" }, 400, cors(request));
   const user = await env.DB.prepare("SELECT * FROM admin_users WHERE email=? AND active=1").bind(body.email.toLowerCase().trim()).first();
-  if (!user || !await passwordVerify(body.password, user.password_hash, env.AUTH_PEPPER || "")) return json({ error: "Kredensial tidak valid" }, 401, cors(env));
+  if (!user || !await passwordVerify(body.password, user.password_hash, env.AUTH_PEPPER || "")) return json({ error: "Kredensial tidak valid" }, 401, cors(request));
   const rawToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   await env.DB.prepare(`INSERT INTO admin_sessions(id,admin_id,token_hash,expires_at) VALUES(?,?,?,datetime('now','+8 hours'))`).bind(id("sess"), user.id, await sha256(rawToken)).run();
-  return json({ token: rawToken, admin: { id: user.id, email: user.email, role: user.role } }, 200, cors(env));
+  return json({ token: rawToken, admin: { id: user.id, email: user.email, role: user.role } }, 200, cors(request));
 }
 __name(login, "login");
 async function bootstrap(request, env) {
-  if (!env.BOOTSTRAP_SECRET || request.headers.get("x-bootstrap-secret") !== env.BOOTSTRAP_SECRET) return json({ error: "Unauthorized" }, 401, cors(env));
+  if (!env.BOOTSTRAP_SECRET || request.headers.get("x-bootstrap-secret") !== env.BOOTSTRAP_SECRET) return json({ error: "Unauthorized" }, 401, cors(request));
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_users").first();
-  if (Number(count?.n) > 0) return json({ error: "Admin sudah pernah dibuat" }, 409, cors(env));
+  if (Number(count?.n) > 0) return json({ error: "Admin sudah pernah dibuat" }, 409, cors(request));
   const body = await request.json();
-  if (!body.email || !body.password || String(body.password).length < 12) return json({ error: "Email dan password minimal 12 karakter wajib diisi" }, 400, cors(env));
+  if (!body.email || !body.password || String(body.password).length < 12) return json({ error: "Email dan password minimal 12 karakter wajib diisi" }, 400, cors(request));
   const adminId = id("adm");
   await env.DB.prepare("INSERT INTO admin_users(id,email,password_hash,role) VALUES(?,?,?,?)").bind(adminId, body.email.toLowerCase().trim(), await passwordHash(body.password, env.AUTH_PEPPER || ""), body.role || "super_admin").run();
-  return json({ ok: true, id: adminId, email: body.email.toLowerCase().trim() }, 201, cors(env));
+  return json({ ok: true, id: adminId, email: body.email.toLowerCase().trim() }, 201, cors(request));
 }
 __name(bootstrap, "bootstrap");
 async function products(request, env) {
   const rows = await env.DB.prepare(`SELECT p.*,MAX(CASE WHEN pp.currency='IDR' THEN pp.amount END) price_idr,MAX(CASE WHEN pp.currency='USD' THEN pp.amount END) price_usd,MAX(CASE WHEN pt.language='en' THEN pt.name END) name_en,MAX(CASE WHEN pt.language='id' THEN pt.name END) name_id,MAX(CASE WHEN pt.language='en' THEN pt.description END) description_en,MAX(CASE WHEN pt.language='id' THEN pt.description END) description_id FROM products p LEFT JOIN product_prices pp ON pp.product_id=p.id LEFT JOIN product_translations pt ON pt.product_id=p.id WHERE p.active=1 GROUP BY p.id ORDER BY p.created_at DESC`).all();
-  return json({ products: rows.results || [] }, 200, cors(env));
+  return json({ products: rows.results || [] }, 200, cors(request));
 }
 __name(products, "products");
 async function adminProducts(request, env) {
   const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
+  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   if (request.method === "GET") return products(request, env);
   const body = await request.json();
   const productId = body.id || id("prd");
@@ -171,7 +176,7 @@ async function adminProducts(request, env) {
     if (amount !== null && amount !== void 0 && amount !== "") await env.DB.prepare(`INSERT INTO product_prices(product_id,currency,amount) VALUES(?,?,?) ON CONFLICT(product_id,currency) DO UPDATE SET amount=excluded.amount`).bind(productId, currency, Math.max(0, Number(amount) || 0)).run();
   }
   await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"), admin.id, request.method === "POST" ? "CREATE" : "UPDATE", "product", productId, JSON.stringify({ type, stock })).run();
-  return json({ ok: true, id: productId }, 200, cors(env));
+  return json({ ok: true, id: productId }, 200, cors(request));
 }
 __name(adminProducts, "adminProducts");
 
@@ -203,10 +208,10 @@ function carrierTrackingUrl(carrier,tracking){const t=String(tracking||"").trim(
 __name(carrierTrackingUrl,"carrierTrackingUrl");
 async function createOrder(request, env) {
   const body = await request.json();
-  if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Keranjang kosong" }, 400, cors(env));
+  if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Keranjang kosong" }, 400, cors(request));
   const currency = body.currency === "IDR" ? "IDR" : "USD";
   const ids = body.items.map((x) => x.productId);
-  if (ids.some((x) => !x)) return json({ error: "Product ID tidak valid" }, 400, cors(env));
+  if (ids.some((x) => !x)) return json({ error: "Product ID tidak valid" }, 400, cors(request));
   const placeholders = ids.map(() => "?").join(",");
   const result = await env.DB.prepare(`SELECT p.id,p.stock,p.type,p.moq,pt.name,pp.amount FROM products p JOIN product_translations pt ON pt.product_id=p.id AND pt.language=? JOIN product_prices pp ON pp.product_id=p.id AND pp.currency=? WHERE p.id IN (${placeholders}) AND p.active=1`).bind(currency === "IDR" ? "id" : "en", currency, ...ids).all();
   const byId = new Map((result.results || []).map((x) => [x.id, x]));
@@ -214,11 +219,11 @@ async function createOrder(request, env) {
   const items = [];
   for (const item of body.items) {
     const p = byId.get(item.productId), qty = Number(item.quantity);
-    if (!p || !Number.isInteger(qty) || qty < 1) return json({ error: "Produk atau quantity tidak valid" }, 400, cors(env));
-    if (p.type !== "retail" && qty < Number(p.moq || 1)) return json({ error: `MOQ produk ${p.name} adalah ${p.moq}` }, 400, cors(env));
-    if (qty > Number(p.stock)) return json({ error: `Stok ${p.name} tidak mencukupi` }, 409, cors(env));
+    if (!p || !Number.isInteger(qty) || qty < 1) return json({ error: "Produk atau quantity tidak valid" }, 400, cors(request));
+    if (p.type !== "retail" && qty < Number(p.moq || 1)) return json({ error: `MOQ produk ${p.name} adalah ${p.moq}` }, 400, cors(request));
+    if (qty > Number(p.stock)) return json({ error: `Stok ${p.name} tidak mencukupi` }, 409, cors(request));
     const unitPrice = Number(p.amount);
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) return json({ error: `Harga produk ${p.name} tidak valid` }, 500, cors(env));
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) return json({ error: `Harga produk ${p.name} tidak valid` }, 500, cors(request));
     const lineTotal = unitPrice * qty;
     subtotal += lineTotal;
     items.push({ p, qty, total: lineTotal });
@@ -243,7 +248,7 @@ async function createOrder(request, env) {
   const rate = parseSettingNumber(setting?.value_json, 16000);
   const total = subtotal + shipping;
   const adminTotalIdr = Math.round(currency === "USD" ? total * rate : total);
-  if (!Number.isFinite(adminTotalIdr) || adminTotalIdr <= 0) return json({ error: "Total order tidak valid" }, 500, cors(env));
+  if (!Number.isFinite(adminTotalIdr) || adminTotalIdr <= 0) return json({ error: "Total order tidak valid" }, 500, cors(request));
 
   const statements = [];
   if (isNewCustomer) {
@@ -288,7 +293,7 @@ async function createOrder(request, env) {
       return json({
         orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr,
         paymentUrl: snap.redirect_url, paymentToken: snap.token
-      }, 201, cors(env));
+      }, 201, cors(request));
     } catch (error) {
       console.error("MIDTRANS_CREATE_ERROR", {
         code: error?.code || "UNKNOWN",
@@ -300,19 +305,19 @@ async function createOrder(request, env) {
       return json({
         error: error?.message || "Gagal membuat halaman pembayaran Midtrans",
         orderId, orderNumber, paymentStatus: "PENDING"
-      }, 502, cors(env));
+      }, 502, cors(request));
     }
   }
-  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(env));
+  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(request));
 }
 __name(createOrder, "createOrder");
 async function adminOrders(request, env) {
   await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
+  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
   const orders = orderRows.results || [];
-  if (!orders.length) return json({ orders: [] }, 200, cors(env));
+  if (!orders.length) return json({ orders: [] }, 200, cors(request));
   const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm,p.material,p.hs_code,p.package_type,p.units_per_package,p.packaging_weight_kg FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
   const paymentRows = await env.DB.prepare(`SELECT order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at,created_at FROM payments ORDER BY created_at DESC`).all();
   const itemsByOrder = new Map();
@@ -322,7 +327,7 @@ async function adminOrders(request, env) {
   }
   const paymentByOrder = new Map();
   for (const payment of paymentRows.results || []) if (!paymentByOrder.has(payment.order_id)) paymentByOrder.set(payment.order_id, payment);
-  return json({orders:orders.map(order=>{const payment=paymentByOrder.get(order.id)||null;return {...order,trackingLink:trackingUrl(order,env),items:itemsByOrder.get(order.id)||[],payment_method:payment?.method||null,payment_provider:payment?.provider||null,payment_transaction_id:payment?.provider_transaction_id||null,payment_reference:payment?.provider_transaction_id||null,paid_at:payment?.verified_at||null};})},200,cors(env));
+  return json({orders:orders.map(order=>{const payment=paymentByOrder.get(order.id)||null;return {...order,trackingLink:trackingUrl(order,env),items:itemsByOrder.get(order.id)||[],payment_method:payment?.method||null,payment_provider:payment?.provider||null,payment_transaction_id:payment?.provider_transaction_id||null,payment_reference:payment?.provider_transaction_id||null,paid_at:payment?.verified_at||null};})},200,cors(request));
 }
 __name(adminOrders, "adminOrders");
 async function hmacHex(secret, value) {
@@ -414,14 +419,14 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
 __name(markOrderPaid, "markOrderPaid");
 async function adminVerifyPayment(request, env) {
   const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
+  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   const body = await request.json();
-  if (!body.orderId) return json({ error: "orderId wajib diisi" }, 400, cors(env));
+  if (!body.orderId) return json({ error: "orderId wajib diisi" }, 400, cors(request));
   const order = await env.DB.prepare(`SELECT id,payment_status,order_status FROM orders WHERE id=?`).bind(body.orderId).first();
-  if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(env));
+  if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(request));
 
   if (String(body.status || "").toUpperCase() === "REJECTED") {
-    if (order.payment_status === "PAID") return json({ error: "Pembayaran yang sudah PAID tidak dapat ditolak" }, 409, cors(env));
+    if (order.payment_status === "PAID") return json({ error: "Pembayaran yang sudah PAID tidak dapat ditolak" }, 409, cors(request));
     const reason = String(body.reason || "Pembayaran ditolak");
     await env.DB.batch([
       env.DB.prepare(`UPDATE orders SET payment_status='REJECTED',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(body.orderId),
@@ -430,36 +435,36 @@ async function adminVerifyPayment(request, env) {
         id("audit"), admin.id, "REJECT_PAYMENT", "order", body.orderId, JSON.stringify({ reason })
       )
     ]);
-    return json({ ok: true, status: "REJECTED" }, 200, cors(env));
+    return json({ ok: true, status: "REJECTED" }, 200, cors(request));
   }
 
   const result = await markOrderPaid(body.orderId, {
     amount: body.amount, currency: body.currency, provider: "manual",
     method: body.method || "bank_transfer", providerTransactionId: body.transactionId || null
   }, env, admin.email);
-  if (!result.ok) return json({ error: result.error }, result.status || 400, cors(env));
+  if (!result.ok) return json({ error: result.error }, result.status || 400, cors(request));
 
   await env.DB.prepare(`INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
     id("audit"), admin.id, "VERIFY_PAYMENT", "order", body.orderId,
     JSON.stringify({ transactionId: body.transactionId || null })
   ).run();
-  return json(result, 200, cors(env));
+  return json(result, 200, cors(request));
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
 
 async function adminShipping(request,env){
   await ensureShippingSchema(env);
   const admin=await requireAdmin(request,env);
-  if(!admin)return json({error:"Unauthorized"},401,cors(env));
+  if(!admin)return json({error:"Unauthorized"},401,cors(request));
   const body=await request.json().catch(()=>({}));
-  if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(env));
+  if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(request));
   const order=await env.DB.prepare("SELECT id,order_number,order_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(body.orderId,body.orderId).first();
-  if(!order)return json({error:"Order tidak ditemukan"},404,cors(env));
+  if(!order)return json({error:"Order tidak ditemukan"},404,cors(request));
   const pack=await ensurePackingAuth(order.id,env);
-  if(!pack)return json({error:"Packing order belum tersedia"},409,cors(env));
+  if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
   const status=String(body.status||pack.status||"PENDING").toUpperCase();
   const allowed=["PENDING","PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
-  if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(env));
+  if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(request));
   const autoCreateShipment=body.autoCreateShipment===true;
   let trackingNumber=String(body.trackingNumber||"").trim()||null;
   const courier=String(body.courier||"").trim().toUpperCase()||null;
@@ -473,13 +478,13 @@ async function adminShipping(request,env){
       trackingUrlValue=shipment.trackingUrl;
       shipmentTest=true;
     }else{
-      return json({error:"Automatic production shipment belum dikonfigurasi dengan API resmi kurir. Masukkan nomor waybill resmi J&T/DHL secara manual atau konfigurasi provider resmi.",code:"SHIPPING_PROVIDER_NOT_CONFIGURED",shipmentMode:"PRODUCTION"},409,cors(env));
+      return json({error:"Automatic production shipment belum dikonfigurasi dengan API resmi kurir. Masukkan nomor waybill resmi J&T/DHL secara manual atau konfigurasi provider resmi.",code:"SHIPPING_PROVIDER_NOT_CONFIGURED",shipmentMode:"PRODUCTION"},409,cors(request));
     }
   }
-  if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(env));
+  if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(request));
   const country=String((await env.DB.prepare("SELECT json_extract(shipping_address_json,'$.country') AS country FROM orders WHERE id=?").bind(order.id).first())?.country||"").toLowerCase();
   const domestic=["indonesia","id","indonesia (id)"].includes(country);
-  if((domestic&&courier!=="J&T")||(!domestic&&courier!=="DHL"))return json({error:domestic?"Order domestik wajib menggunakan J&T":"Order ekspor wajib menggunakan DHL"},400,cors(env));
+  if((domestic&&courier!=="J&T")||(!domestic&&courier!=="DHL"))return json({error:domestic?"Order domestik wajib menggunakan J&T":"Order ekspor wajib menggunakan DHL"},400,cors(request));
   await env.DB.prepare("UPDATE packing_orders SET courier=?,tracking_number=?,tracking_url=?,status=?,shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END WHERE order_id=?").bind(courier,trackingNumber,trackingUrlValue,status,status,status,order.id).run();
   const orderStatus=status==="DELIVERED"?"DELIVERED":status==="SHIPPED"?"SHIPPED":status==="READY TO SHIP"?"READY TO SHIP":status==="PACKING"?"PACKING":order.order_status||"PROCESSING";
   await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(orderStatus,order.id).run();
@@ -498,32 +503,32 @@ async function adminShipping(request,env){
     console.error("SHIPPING_DOCUMENT_EMAIL_ERROR",{orderId:order.id,message:error?.message||String(error)});
     await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),order.id).run().catch(()=>{});
   }
-  return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env),shipmentMode:mode,testShipment:shipmentTest},200,cors(env));
+  return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env),shipmentMode:mode,testShipment:shipmentTest},200,cors(request));
 }
 __name(adminShipping,"adminShipping");
 async function paymentWebhook(request, env) {
   const serverKey = String(env.MIDTRANS_SERVER_KEY || "").trim();
-  if (!serverKey) return json({ error: "MIDTRANS_SERVER_KEY belum dikonfigurasi" }, 503, cors(env));
+  if (!serverKey) return json({ error: "MIDTRANS_SERVER_KEY belum dikonfigurasi" }, 503, cors(request));
   const raw = await request.text();
   let body;
-  try { body = JSON.parse(raw); } catch { return json({ error: "Payload webhook bukan JSON valid" }, 400, cors(env)); }
+  try { body = JSON.parse(raw); } catch { return json({ error: "Payload webhook bukan JSON valid" }, 400, cors(request)); }
 
   const orderNumber = String(body.order_id || "").trim();
   const statusCode = String(body.status_code || "").trim();
   const grossAmount = String(body.gross_amount || "").trim();
   const signature = String(body.signature_key || "").trim();
   const expected = await sha512(`${orderNumber}${statusCode}${grossAmount}${serverKey}`);
-  if (!timingSafeEqualHex(signature, expected)) return json({ error: "Invalid Midtrans signature" }, 401, cors(env));
+  if (!timingSafeEqualHex(signature, expected)) return json({ error: "Invalid Midtrans signature" }, 401, cors(request));
 
   const transactionStatus = String(body.transaction_status || "").toLowerCase();
   const transactionId = String(body.transaction_id || "").trim();
   const eventId = await sha256(`${orderNumber}|${transactionId}|${transactionStatus}|${statusCode}`);
   if (await env.DB.prepare(`SELECT id FROM payment_webhooks WHERE event_id=?`).bind(eventId).first()) {
-    return json({ ok: true, duplicate: true }, 200, cors(env));
+    return json({ ok: true, duplicate: true }, 200, cors(request));
   }
 
   const order = await env.DB.prepare(`SELECT * FROM orders WHERE order_number=?`).bind(orderNumber).first();
-  if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(env));
+  if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(request));
 
   const fraudStatus = String(body.fraud_status || "").toLowerCase();
   const isSuccess = transactionStatus === "settlement" || (transactionStatus === "capture" && fraudStatus === "accept");
@@ -535,7 +540,7 @@ async function paymentWebhook(request, env) {
       provider: "midtrans", method: body.payment_type || "snap",
       providerTransactionId: transactionId || null
     }, env, "midtrans_webhook");
-    if (!result.ok) return json({ error: result.error }, result.status || 400, cors(env));
+    if (!result.ok) return json({ error: result.error }, result.status || 400, cors(request));
   } else {
     const mapped = { pending: "PENDING", deny: "REJECTED", cancel: "CANCELLED", expire: "EXPIRED", failure: "FAILED" }[transactionStatus];
     if (mapped && order.payment_status !== "PAID") {
@@ -554,7 +559,7 @@ async function paymentWebhook(request, env) {
   return json({
     ok: true, orderId: order.id, orderNumber, transactionStatus,
     invoiceNo: result.invoiceNo || null, packingNo: result.packingNo || null
-  }, 200, cors(env));
+  }, 200, cors(request));
 }
 __name(paymentWebhook, "paymentWebhook");
 function safePdfText(value) {
@@ -861,19 +866,19 @@ async function publicMedia(request, env, key) {
 __name(publicMedia, "publicMedia");
 async function adminMedia(request, env) {
   const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
-  if (!env.MEDIA) return json({ error: "R2 MEDIA belum dikonfigurasi" }, 503, cors(env));
+  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
+  if (!env.MEDIA) return json({ error: "R2 MEDIA belum dikonfigurasi" }, 503, cors(request));
   if (request.method === "GET") {
     const rows = await env.DB.prepare("SELECT * FROM media ORDER BY created_at DESC").all();
-    return json({ media: rows.results || [] }, 200, cors(env));
+    return json({ media: rows.results || [] }, 200, cors(request));
   }
   if (request.method === "POST") {
     const form = await request.formData();
     const file = form.get("file");
-    if (!(file instanceof File)) return json({ error: "File wajib diunggah" }, 400, cors(env));
-    if (file.size > 25 * 1024 * 1024) return json({ error: "Ukuran file maksimal 25 MiB" }, 413, cors(env));
+    if (!(file instanceof File)) return json({ error: "File wajib diunggah" }, 400, cors(request));
+    if (file.size > 25 * 1024 * 1024) return json({ error: "Ukuran file maksimal 25 MiB" }, 413, cors(request));
     const allowed = /^(image\/(jpeg|png|webp|gif)|application\/pdf)$/i;
-    if (!allowed.test(file.type)) return json({ error: "Tipe file tidak didukung" }, 415, cors(env));
+    if (!allowed.test(file.type)) return json({ error: "Tipe file tidak didukung" }, 415, cors(request));
     const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
     const key = `media/${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
     await env.MEDIA.put(key, file.stream(), { httpMetadata: { contentType: file.type, cacheControl: "public, max-age=31536000, immutable" } });
@@ -881,30 +886,30 @@ async function adminMedia(request, env) {
     await env.DB.prepare("INSERT INTO media(id,object_key,filename,mime_type,size_bytes,alt_en,alt_id) VALUES(?,?,?,?,?,?,?)").bind(mediaId, key, file.name, file.type, file.size, form.get("alt_en") || null, form.get("alt_id") || null).run();
     await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"), admin.id, "UPLOAD", "media", mediaId, JSON.stringify({ key, filename: file.name, size: file.size })).run();
     const base = env.MEDIA_PUBLIC_BASE_URL || "";
-    return json({ ok: true, media: { id: mediaId, key, filename: file.name, mimeType: file.type, size: file.size, url: base ? `${base.replace(/\/$/, "")}/${key}` : null } }, 201, cors(env));
+    return json({ ok: true, media: { id: mediaId, key, filename: file.name, mimeType: file.type, size: file.size, url: base ? `${base.replace(/\/$/, "")}/${key}` : null } }, 201, cors(request));
   }
   if (request.method === "DELETE") {
     const body = await request.json().catch(() => ({}));
     const media = await env.DB.prepare("SELECT * FROM media WHERE id=?").bind(body.id || "").first();
-    if (!media) return json({ error: "Media tidak ditemukan" }, 404, cors(env));
+    if (!media) return json({ error: "Media tidak ditemukan" }, 404, cors(request));
     await env.MEDIA.delete(media.object_key);
     await env.DB.prepare("DELETE FROM media WHERE id=?").bind(media.id).run();
     await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"), admin.id, "DELETE", "media", media.id, JSON.stringify({ key: media.object_key })).run();
-    return json({ ok: true }, 200, cors(env));
+    return json({ ok: true }, 200, cors(request));
   }
-  return json({ error: "Method not allowed" }, 405, cors(env));
+  return json({ error: "Method not allowed" }, 405, cors(request));
 }
 __name(adminMedia, "adminMedia");
 async function documentPdf(request, env, type, orderId) {
   await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
+  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   let ref = String(orderId || "").trim();
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
-  if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(env));
+  if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
   let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.packaging_weight_kg,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
-  if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(env));
+  if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(request));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
   order.tracking_link=trackingUrl(order,env);
@@ -924,25 +929,25 @@ async function documentPdf(request, env, type, orderId) {
       await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key,order.id).run();
     }
   }
-  return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(env),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret"}});
+  return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(request),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret"}});
 }
 __name(documentPdf, "documentPdf");
 async function adminSettings(request, env) {
   const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
+  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   if (request.method === "GET") {
     const rows = await env.DB.prepare("SELECT key,value_json FROM site_settings").all();
-    return json({ settings: Object.fromEntries((rows.results || []).map((x) => [x.key, JSON.parse(x.value_json)])) }, 200, cors(env));
+    return json({ settings: Object.fromEntries((rows.results || []).map((x) => [x.key, JSON.parse(x.value_json)])) }, 200, cors(request));
   }
   const body = await request.json();
   for (const [key, value] of Object.entries(body)) await env.DB.prepare(`INSERT INTO site_settings(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=CURRENT_TIMESTAMP`).bind(key, JSON.stringify(value)).run();
   await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,metadata_json) VALUES(?,?,?,?,?)").bind(id("audit"), admin.id, "UPDATE", "site_settings", JSON.stringify(body)).run();
-  return json({ ok: true }, 200, cors(env));
+  return json({ ok: true }, 200, cors(request));
 }
 __name(adminSettings, "adminSettings");
 async function publicSettings(request, env) {
   if (request.method !== "GET") {
-    return json({ error: "Method not allowed" }, 405, cors(env));
+    return json({ error: "Method not allowed" }, 405, cors(request));
   }
 
   const rows = await env.DB
@@ -956,7 +961,7 @@ async function publicSettings(request, env) {
         JSON.parse(x.value_json)
       ])
     )
-  }, 200, cors(env));
+  }, 200, cors(request));
 }
 
 __name(publicSettings, "publicSettings");
@@ -966,8 +971,20 @@ __name(publicTracking,"publicTracking");
 var index_default = {
   
   async fetch(request, env) {
-  const origin = cors(env);
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": origin, "access-control-allow-headers": "content-type, authorization, x-bootstrap-secret", "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS" } });
+  const origin = cors(request);
+  if (request.method === "OPTIONS") {
+    const requestedHeaders = request.headers.get("access-control-request-headers") || "content-type, authorization, x-bootstrap-secret";
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "access-control-allow-origin": origin,
+        "access-control-allow-headers": requestedHeaders,
+        "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "access-control-max-age": "86400",
+        "vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+      }
+    });
+  }
   const url = new URL(request.url);
   try {
     if (url.pathname === "/api/health") return json({ ok: true, environment: env.ENVIRONMENT || "unknown" }, 200, origin);
