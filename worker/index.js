@@ -189,7 +189,7 @@ async function ensurePackingAuth(orderId,env){const row=await env.DB.prepare("SE
 __name(ensurePackingAuth,"ensurePackingAuth");
 function escEmail(value){return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 __name(escEmail,"escEmail");
-async function sendOrderDocumentsEmail(order,items,branding,env){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack},track=trackingUrl(enriched,env),brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":"order-documents-"+order.id},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
+async function sendOrderDocumentsEmail(order,items,branding,env){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack}; enriched.tracking_link=trackingUrl(enriched,env); const track=enriched.tracking_link,brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":"order-documents-"+order.id},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
@@ -308,7 +308,7 @@ async function adminOrders(request, env) {
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
   const orders = orderRows.results || [];
   if (!orders.length) return json({ orders: [] }, 200, cors(env));
-  const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
+  const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm,p.material,p.hs_code,p.package_type,p.units_per_package,p.packaging_weight_kg FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
   const paymentRows = await env.DB.prepare(`SELECT order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at,created_at FROM payments ORDER BY created_at DESC`).all();
   const itemsByOrder = new Map();
   for (const item of itemRows.results || []) {
@@ -666,31 +666,32 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     const subtotal=Number(order.original_amount)||0, shipping=Number(order.shipping_amount)||0, total=Number(order.total_amount)||0, cur=order.original_currency||"USD";
     const sx=350; y=Math.max(y-8,245);
     text(sx,y,"Subtotal",8.5,"F1",muted); text(490,y,money(subtotal,cur),8.5,"F1");
-    text(sx,y-18,"Pengiriman",8.5,"F1",muted); text(490,y-18,money(shipping,cur),8.5,"F1");
+    text(sx,y-18,"Shipping",8.5,"F1",muted); text(490,y-18,money(shipping,cur),8.5,"F1");
     line(sx,y-28,W-M,y-28,0.8,tan);
     roundRect(sx,y-62,W-M-sx,30,true,"0.86 0.78 0.66");
-    text(sx+10,y-51,"TOTAL PEMBAYARAN",9,"F2");
+    text(sx+10,y-51,"TOTAL",9,"F2");
     text(482,y-51,money(total,cur),9,"F2");
-    text(M,205,"Metode Pembayaran",8,"F2",muted);
+    text(M,205,"Payment Method",8,"F2",muted);
     text(M,189,"Midtrans / Payment Gateway",8.5,"F1");
   } else {
     const dy=Math.max(y-8,235);
-    text(M,dy,"INFORMASI SHIPMENT",8,"F2",muted);
-    text(M,dy-17,"Kurir: " + (order.shipping_method || "-"),8,"F1");
-    text(M,dy-32,"No. Resi: -",8,"F1");
+    text(M,dy,"SHIPPING INFORMATION",8,"F2",muted);
+    text(M,dy-17,"Courier: " + (order.courier || order.shipping_method || "-"),8,"F1");
+    text(M,dy-32,"Tracking No.: " + (order.tracking_number || "-"),8,"F1");
     text(310,dy,"PACKAGE SUMMARY",8,"F2",muted);
-    text(310,dy-17,"Jumlah Paket: 1",8,"F1");
-    text(310,dy-32,"Status: Packing pending",8,"F1");
+    text(310,dy-17,"Packages: " + String(order.package_count || 1),8,"F1");
+    text(310,dy-32,"Status: " + String(order.packing_status || "PENDING"),8,"F1");
   }
 
   if(type==="packing"){
+    const packY=Math.max(y-8,235);
     const totalNet=items.reduce((s,it)=>s+(Number(it.weight_kg)||0)*(Number(it.quantity)||0),0);
     const packageWeight=Number(order.packaging_weight_kg)||0;
     const gross=Number(order.gross_weight_kg)||totalNet+packageWeight;
-    text(M,dy-50,"Total Net Weight: "+totalNet.toFixed(2)+" kg",8,"F1");
-    text(M,dy-65,"Total Gross Weight: "+gross.toFixed(2)+" kg",8,"F1");
-    text(310,dy-50,"Package Type: "+String(order.packaging_type||"-"),8,"F1");
-    text(310,dy-65,"Dimensions: "+String(order.dimensions_cm||"-"),8,"F1");
+    text(M,packY-50,"Total Net Weight: "+totalNet.toFixed(2)+" kg",8,"F1");
+    text(M,packY-65,"Total Gross Weight: "+gross.toFixed(2)+" kg",8,"F1");
+    text(310,packY-50,"Package Type: "+String(order.packaging_type||"-"),8,"F1");
+    text(310,packY-65,"Dimensions: "+String(order.dimensions_cm||"-"),8,"F1");
   }
 
   const barcodeValue=String(order.tracking_link || "");
@@ -780,7 +781,7 @@ async function documentPdf(request, env, type, orderId) {
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(env));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(env));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
