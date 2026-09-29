@@ -193,7 +193,7 @@ async function sendOrderDocumentsEmail(order,items,branding,env){const apiKey=St
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
-function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean+crypto.randomUUID().replace(/-/g,"").slice(0,8).toUpperCase()}
+function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
 __name(generatedTrackingNumber,"generatedTrackingNumber");
 function carrierTrackingUrl(carrier,tracking){return carrier==="J&T"?"https://www.jet.co.id/track":"https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(String(tracking||""))}
 __name(carrierTrackingUrl,"carrierTrackingUrl");
