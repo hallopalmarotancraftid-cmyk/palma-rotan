@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var cors = /* @__PURE__ */ __name((_env) => "https://palmarotancraft-staging.pages.dev", "cors");
+var cors = /* @__PURE__ */ __name((_env) => "https://palma-rotan.pages.dev", "cors");
 var json = /* @__PURE__ */ __name((data, status = 200, origin = "*") => new Response(JSON.stringify(data), {
   status,
   headers: {
