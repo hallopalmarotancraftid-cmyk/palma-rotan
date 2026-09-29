@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var cors = /* @__PURE__ */ __name((env) => env.ALLOWED_ORIGIN || "*", "cors");
+var cors = /* @__PURE__ */ __name((env) => "*", "cors");
 var json = /* @__PURE__ */ __name((data, status = 200, origin = "*") => new Response(JSON.stringify(data), {
   status,
   headers: {
@@ -193,7 +193,7 @@ async function sendOrderDocumentsEmail(order,items,branding,env,idempotencyKey=n
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
-function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
+function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}\nasync function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}return true}
 function sandboxTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-12);return "TEST-"+prefix+"-"+clean}
 function createSandboxShipment(order,carrier,env){const trackingNumber=sandboxTrackingNumber(order.order_number,carrier);return {trackingNumber,trackingUrl:trackingUrl(order,env),mode:"SANDBOX",test:true}}
 function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
@@ -305,7 +305,7 @@ async function createOrder(request, env) {
   return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(env));
 }
 __name(createOrder, "createOrder");
-async function adminOrders(request, env) {
+async function adminOrders(request, env) {\n  await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
@@ -445,7 +445,7 @@ async function adminVerifyPayment(request, env) {
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
 
-async function adminShipping(request,env){
+async function adminShipping(request,env){\n  await ensureShippingSchema(env);
   const admin=await requireAdmin(request,env);
   if(!admin)return json({error:"Unauthorized"},401,cors(env));
   const body=await request.json().catch(()=>({}));
@@ -892,7 +892,7 @@ async function adminMedia(request, env) {
   return json({ error: "Method not allowed" }, 405, cors(env));
 }
 __name(adminMedia, "adminMedia");
-async function documentPdf(request, env, type, orderId) {
+async function documentPdf(request, env, type, orderId) {\n  await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
   let ref = String(orderId || "").trim();
