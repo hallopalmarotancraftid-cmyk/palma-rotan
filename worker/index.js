@@ -160,8 +160,8 @@ async function adminProducts(request, env) {
   const type = ["retail", "custom", "wholesale", "oem"].includes(body.type) ? body.type : "retail";
   const moq = type === "retail" ? 1 : Math.max(1, Number(body.moq) || 1);
   const stock = Math.max(0, Number(body.stock) || 0);
-  await env.DB.prepare(`INSERT INTO products(id,sku,type,category,stock,moq,weight_kg,dimensions_cm,image_key,active) VALUES(?,?,?,?,?,?,?,?,?,1)
-    ON CONFLICT(id) DO UPDATE SET sku=excluded.sku,type=excluded.type,category=excluded.category,stock=excluded.stock,moq=excluded.moq,weight_kg=excluded.weight_kg,dimensions_cm=excluded.dimensions_cm,image_key=excluded.image_key,active=1,updated_at=CURRENT_TIMESTAMP`).bind(productId, body.sku || productId, type, body.category || "home", stock, moq, Number(body.weight) || 0, body.dimensions || "", body.image || null).run();
+  await env.DB.prepare(`INSERT INTO products(id,sku,type,category,stock,moq,weight_kg,dimensions_cm,image_key,material,hs_code,package_type,units_per_package,packaging_weight_kg,active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+    ON CONFLICT(id) DO UPDATE SET sku=excluded.sku,type=excluded.type,category=excluded.category,stock=excluded.stock,moq=excluded.moq,weight_kg=excluded.weight_kg,dimensions_cm=excluded.dimensions_cm,image_key=excluded.image_key,material=excluded.material,hs_code=excluded.hs_code,package_type=excluded.package_type,units_per_package=excluded.units_per_package,packaging_weight_kg=excluded.packaging_weight_kg,active=1,updated_at=CURRENT_TIMESTAMP`).bind(productId, body.sku || productId, type, body.category || "home", stock, moq, Number(body.weight) || 0, body.dimensions || "", body.image || null, body.material || "", body.hsCode || "", body.packageType || "", Math.max(1, Number(body.unitsPerPackage) || 1), Math.max(0, Number(body.packagingWeightKg) || 0)).run();;
   for (const lang of ["en", "id"]) {
     const name = lang === "en" ? body.nameEN || body.name || "Untitled Product" : body.nameID || body.name || "Produk Tanpa Nama";
     const desc = lang === "en" ? body.descriptionEN || body.description || "" : body.descriptionID || body.description || "";
@@ -570,28 +570,30 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   text(220, 797, tagline1.slice(0, 24), 8, "F2", muted);
   text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
   text(410, 800, website.slice(0, 30), 7, "F1", muted);
-  if (phone) text(410, 785, phone.slice(0, 30), 7, "F1", muted);
-  if (address) text(410, 770, address.slice(0, 30), 7, "F1", muted);
+  if (phone) text(410, 785, "WhatsApp: "+phone.slice(0, 20), 7, "F1", muted);
+  const email = String(branding.email || "");
+  if (email) text(410, 770, email.slice(0, 30), 7, "F1", muted);
+  if (address) text(220, 758, address.slice(0, 54), 6.5, "F1", muted);
   line(M, 748, W-M, 748, 1.2, brown);
 
   // Document title and metadata.
   text(M, 710, type === "invoice" ? "INVOICE" : "PACKING LIST", 25, "F3");
-  text(M, 690, type === "invoice" ? "Faktur Pembelian" : "Daftar Kemasan Pengiriman", 9, "F1", muted);
+  text(M, 690, type === "invoice" ? "Commercial invoice" : "Shipment packing document", 9, "F1", muted);
   const docNo = type === "invoice" ? (order.invoice_number || "-") : (order.packing_number || "-");
-  text(350, 714, type === "invoice" ? "No. Invoice" : "No. Packing", 8, "F2", muted);
+  text(350, 714, type === "invoice" ? "Invoice No." : "Packing List No.", 8, "F2", muted);
   text(430, 714, docNo, 8, "F1");
-  text(350, 696, "No. Order", 8, "F2", muted);
+  text(350, 696, "Order No.", 8, "F2", muted);
   text(430, 696, order.order_number || "-", 8, "F1");
-  text(350, 678, "Tanggal", 8, "F2", muted);
+  text(350, 678, "Date", 8, "F2", muted);
   text(430, 678, String(order.created_at || "-").replace("T"," ").slice(0,19), 8, "F1");
 
   // Customer / destination cards.
   roundRect(M, 595, 245, 61, false);
   roundRect(308, 595, 245, 61, false);
-  text(54, 638, "KEPADA", 8, "F2", muted);
+  text(54, 638, "BILL TO", 8, "F2", muted);
   text(54, 621, (`${order.first_name || ""} ${order.last_name || ""}`.trim() || "-").slice(0,36), 10, "F2");
   text(54, 606, "Email: " + (order.email || "-"), 7.5, "F1", muted);
-  text(320, 638, "PENGIRIMAN", 8, "F2", muted);
+  text(320, 638, "SHIPMENT", 8, "F2", muted);
   let addressText = "-";
   try {
     const parsedAddress = JSON.parse(order.shipping_address_json || "{}");
@@ -605,14 +607,14 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
 
   if(type === "packing"){
     roundRect(M, 550, 250, 27, true, "0.88 0.96 0.90");
-    text(55, 559, "RESI: " + String(order.tracking_number || "BELUM TERSEDIA").slice(0, 36), 8, "F2", brown);
-    if(order.courier) text(55, 544, "KURIR: " + String(order.courier).slice(0, 36), 7.5, "F1", muted);
+    text(55, 559, "TRACKING NO.: " + String(order.tracking_number || "BELUM TERSEDIA").slice(0, 36), 8, "F2", brown);
+    if(order.courier) text(55, 544, "COURIER: " + String(order.courier).slice(0, 36), 7.5, "F1", muted);
   }
   if(type === "invoice"){
     roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
-    text(55, 559, "PEMBAYARAN: " + String(order.payment_status || "PENDING"), 8, "F2", brown);
+    text(55, 559, "PAYMENT: " + String(order.payment_status || "PENDING"), 8, "F2", brown);
     roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
-    text(182, 559, "MATA UANG: " + String(order.original_currency || "USD"), 8, "F2", brown);
+    text(182, 559, "CURRENCY: " + String(order.original_currency || "USD"), 8, "F2", brown);
   } else {
     roundRect(M, 550, 118, 27, true, "0.94 0.90 0.84");
     text(55, 559, "PAKET: 1", 8, "F2", brown);
@@ -628,17 +630,17 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   rect(M,y-24,W-2*M,24,true,"0.90 0.85 0.77");
   if(type === "invoice"){
     text(49,y-16,"NO",7.5,"F2");
-    text(82,y-16,"PRODUK",7.5,"F2");
+    text(82,y-16,"PRODUCT / DESCRIPTION",7.5,"F2");
     text(365,y-16,"QTY",7.5,"F2");
-    text(423,y-16,"HARGA",7.5,"F2");
-    text(497,y-16,"JUMLAH",7.5,"F2");
+    text(423,y-16,"UNIT PRICE",7.5,"F2");
+    text(497,y-16,"AMOUNT",7.5,"F2");
   } else {
     text(49,y-16,"NO",7.5,"F2");
-    text(82,y-16,"PRODUK",7.5,"F2");
+    text(82,y-16,"PRODUCT / DESCRIPTION",7.5,"F2");
     text(363,y-16,"QTY",7.5,"F2");
-    text(417,y-16,"BERAT",7.5,"F2");
-    text(477,y-16,"DIMENSI",7.5,"F2");
-    text(535,y-16,"KET.",7.5,"F2");
+    text(417,y-16,"NET WT.",7.5,"F2");
+    text(477,y-16,"DIMENSIONS",7.5,"F2");
+    text(535,y-16,"MATERIAL",7.5,"F2");
   }
   y-=24;
   items.forEach((item,index)=>{
@@ -655,7 +657,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     } else {
       text(417,y-18,Number(item.weight_kg||0).toFixed(1)+" kg",7.2,"F1");
       text(477,y-18, item.dimensions_cm || "-",6.8,"F1");
-      text(535,y-18,"Rattan",6.8,"F1");
+      text(535,y-18,item.material || "Rattan",6.2,"F1");
     }
     y-=rowH;
   });
@@ -673,22 +675,32 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(M,189,"Midtrans / Payment Gateway",8.5,"F1");
   } else {
     const dy=Math.max(y-8,235);
-    text(M,dy,"INFORMASI PENGIRIMAN",8,"F2",muted);
+    text(M,dy,"INFORMASI SHIPMENT",8,"F2",muted);
     text(M,dy-17,"Kurir: " + (order.shipping_method || "-"),8,"F1");
     text(M,dy-32,"No. Resi: -",8,"F1");
-    text(310,dy,"RINGKASAN KEMASAN",8,"F2",muted);
+    text(310,dy,"PACKAGE SUMMARY",8,"F2",muted);
     text(310,dy-17,"Jumlah Paket: 1",8,"F1");
     text(310,dy-32,"Status: Packing pending",8,"F1");
   }
 
+  if(type==="packing"){
+    const totalNet=items.reduce((s,it)=>s+(Number(it.weight_kg)||0)*(Number(it.quantity)||0),0);
+    const packageWeight=Number(order.packaging_weight_kg)||0;
+    const gross=Number(order.gross_weight_kg)||totalNet+packageWeight;
+    text(M,dy-50,"Total Net Weight: "+totalNet.toFixed(2)+" kg",8,"F1");
+    text(M,dy-65,"Total Gross Weight: "+gross.toFixed(2)+" kg",8,"F1");
+    text(310,dy-50,"Package Type: "+String(order.packaging_type||"-"),8,"F1");
+    text(310,dy-65,"Dimensions: "+String(order.dimensions_cm||"-"),8,"F1");
+  }
+
   const barcodeValue=String(order.tracking_link || "");
-  if(barcodeValue){drawCode128(commands,M,74,W-2*M,42,barcodeValue);text(M,58,"SCAN / AUTHENTICATE ORDER",7,"F2",muted);text(M,46,String(order.order_number||"").slice(0,42),7,"F1",muted)}
+  if(barcodeValue){drawCode128(commands,M,74,W-2*M,42,barcodeValue);text(M,58,"SCAN / AUTHENTICATE ORDER / TRACKING",7,"F2",muted);text(M,46,String(order.order_number||"").slice(0,42),7,"F1",muted)}
 
   // Footer.
   line(M,92,W-M,92,0.8,tan);
   palmLogo(M, 52, 0.25);
-  text(68,67,"Kerajinan Tangan",7,"F2",muted);
-  text(68,56,"Bahan Alami • Ramah Lingkungan",6.5,"F1",muted);
+  text(68,67,"Handcrafted Rattan",7,"F2",muted);
+  text(68,56,"Natural Materials • Crafted in Indonesia",6.5,"F1",muted);
   text(390,67,"PALMA ROTAN",8,"F2");
   text(390,54,"Natural Craft • Timeless Beauty",6.5,"F1",muted);
 
