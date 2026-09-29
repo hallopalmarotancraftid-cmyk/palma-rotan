@@ -403,7 +403,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     return { ok: false, status: 409, error: "Stok berubah atau transaksi pembayaran tidak dapat diproses" };
   }
   const paidOrder=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.auth_code,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.packaging_type,pk.dimensions_cm FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(orderId).first();
-  if(paidOrder?.email){try{const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));await sendOrderDocumentsEmail(paidOrder,items,branding,env)}catch(error){console.error("ORDER_DOCUMENT_EMAIL_ERROR",{orderId,message:error?.message||String(error)});await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),orderId).run().catch(()=>{})}}
+  if(paidOrder?.email){try{const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','businessPhone','email','address','pdfTagline1','pdfTagline2','countryOrigin','exporter','paymentTerms','incoterms','portLoading','portDestination')").all();const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));await sendOrderDocumentsEmail(paidOrder,items,branding,env)}catch(error){console.error("ORDER_DOCUMENT_EMAIL_ERROR",{orderId,message:error?.message||String(error)});await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),orderId).run().catch(()=>{})}}
   return { ok: true, alreadyPaid: false, invoiceNo, packingNo };
 }
 __name(markOrderPaid, "markOrderPaid");
@@ -594,6 +594,13 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   const tagline2 = String(branding.pdfTagline2 || "TIMELESS BEAUTY");
   const website = String(branding.website || "palmarotancraft.id");
   const phone = String(branding.whatsapp || "08978186933");
+  const businessPhone = String(branding.businessPhone || phone);
+  const countryOrigin = String(branding.countryOrigin || "Indonesia");
+  const exporter = String(branding.exporter || brand);
+  const paymentTerms = String(branding.paymentTerms || "");
+  const incoterms = String(branding.incoterms || "");
+  const portLoading = String(branding.portLoading || "");
+  const portDestination = String(branding.portDestination || "");
   const address = String(branding.address || "Jl. Rotan Jaya, Ds. Teluk Wetan, RT 07/RW 01, Kec. Welahan, Kab. Jepara, Prov. Jawa Tengah, Indonesia");
   palmLogo(M, 760, 0.62);
   text(88, 795, brandLine1.slice(0, 18), 25, "F2");
@@ -602,7 +609,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   text(220, 797, tagline1.slice(0, 24), 8, "F2", muted);
   text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
   text(410, 800, website.slice(0, 30), 7, "F1", muted);
-  if (phone) text(410, 785, "WhatsApp: "+phone.slice(0, 20), 7, "F1", muted);
+  if (phone) text(410, 785, "Phone / WhatsApp: "+businessPhone.slice(0, 18), 7, "F1", muted);
   const email = String(branding.email || "hallo.palmarotancraft.id@gmail.com");
   if (email) text(410, 770, email.slice(0, 30), 7, "F1", muted);
   if (address) text(220, 758, address.slice(0, 54), 6.5, "F1", muted);
@@ -652,6 +659,16 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(55, 559, "PACKAGES: " + String(order.package_count || 1), 8, "F2", brown);
     roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
     text(182, 559, "STATUS: " + String(order.packing_status || "PENDING"), 8, "F2", brown);
+  }
+
+  if(type==="invoice"){
+    const metaY=535;
+    text(M,metaY,"EXPORTER: "+exporter.slice(0,38),7.2,"F1",muted);
+    text(M,metaY-13,"COUNTRY OF ORIGIN: "+countryOrigin.slice(0,29),7.2,"F1",muted);
+    if(paymentTerms) text(310,metaY,"PAYMENT TERMS: "+paymentTerms.slice(0,30),7.2,"F1",muted);
+    if(incoterms) text(310,metaY-13,"INCOTERMS: "+incoterms.slice(0,30),7.2,"F1",muted);
+    if(portLoading) text(M,metaY-26,"PORT OF LOADING: "+portLoading.slice(0,30),7.2,"F1",muted);
+    if(portDestination) text(310,metaY-26,"PORT OF DESTINATION: "+portDestination.slice(0,30),7.2,"F1",muted);
   }
 
   // Table.
@@ -814,7 +831,7 @@ async function documentPdf(request, env, type, orderId) {
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(env));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.packaging_weight_kg,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(env));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
