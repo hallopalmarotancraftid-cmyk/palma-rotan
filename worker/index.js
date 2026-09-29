@@ -195,7 +195,7 @@ function shippingCarrierForCountry(country){const c=String(country||"").trim().t
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
 function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
 __name(generatedTrackingNumber,"generatedTrackingNumber");
-function carrierTrackingUrl(carrier,tracking){return carrier==="J&T"?"https://www.jet.co.id/track":"https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(String(tracking||""))}
+function carrierTrackingUrl(carrier,tracking){const t=String(tracking||"").trim();if(carrier==="J&T")return "https://www.jet.co.id/track"+(t?"?bills="+encodeURIComponent(t):"");return "https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(t)}
 __name(carrierTrackingUrl,"carrierTrackingUrl");
 async function createOrder(request, env) {
   const body = await request.json();
@@ -456,7 +456,7 @@ async function adminShipping(request,env){
   if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(env));
   const trackingNumber=String(body.trackingNumber||"").trim()||null;
   const courier=String(body.courier||"").trim().toUpperCase()||null;
-  const trackingUrlValue=String(body.trackingUrl||"").trim()||null;
+  const trackingUrlValue=String(body.trackingUrl||"").trim() || (trackingNumber ? carrierTrackingUrl(courier,trackingNumber) : null);
   if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(env));
   const country=String((await env.DB.prepare("SELECT json_extract(shipping_address_json,'$.country') AS country FROM orders WHERE id=?").bind(order.id).first())?.country||"").toLowerCase();
   const domestic=["indonesia","id","indonesia (id)"].includes(country);
