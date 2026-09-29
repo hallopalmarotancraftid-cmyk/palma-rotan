@@ -1,3 +1,4 @@
+// Cloudflare Workers staging deployment configuration
 {
   "name": "palma-rotan-api-staging",
   "main": "index.js",
