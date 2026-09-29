@@ -561,8 +561,8 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   const tagline1 = String(branding.pdfTagline1 || "NATURAL CRAFT");
   const tagline2 = String(branding.pdfTagline2 || "TIMELESS BEAUTY");
   const website = String(branding.website || "palmarotancraft.id");
-  const phone = String(branding.whatsapp || "");
-  const address = String(branding.address || "");
+  const phone = String(branding.whatsapp || "08978186933");
+  const address = String(branding.address || "Jl. Rotan Jaya, Ds. Teluk Wetan, RT 07/RW 01, Kec. Welahan, Kab. Jepara, Prov. Jawa Tengah, Indonesia");
   palmLogo(M, 760, 0.62);
   text(88, 795, brandLine1.slice(0, 18), 25, "F2");
   if (brandLine2) text(88, 770, brandLine2.slice(0, 18), 25, "F2");
@@ -571,7 +571,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
   text(410, 800, website.slice(0, 30), 7, "F1", muted);
   if (phone) text(410, 785, "WhatsApp: "+phone.slice(0, 20), 7, "F1", muted);
-  const email = String(branding.email || "");
+  const email = String(branding.email || "hallo.palmarotancraft.id@gmail.com");
   if (email) text(410, 770, email.slice(0, 30), 7, "F1", muted);
   if (address) text(220, 758, address.slice(0, 54), 6.5, "F1", muted);
   line(M, 748, W-M, 748, 1.2, brown);
@@ -602,12 +602,12 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     addressText = String(order.shipping_address_json || "-");
   }
   const addressLines = wrap(addressText,31);
-  text(320,621,"Alamat: "+addressLines[0],8,"F1");
+  text(320,621,"Address: "+addressLines[0],8,"F1");
   if(addressLines[1]) text(320,606,addressLines[1],7.5,"F1",muted);
 
   if(type === "packing"){
     roundRect(M, 550, 250, 27, true, "0.88 0.96 0.90");
-    text(55, 559, "TRACKING NO.: " + String(order.tracking_number || "BELUM TERSEDIA").slice(0, 36), 8, "F2", brown);
+    text(55, 559, "TRACKING NO.: " + String(order.tracking_number || "NOT ASSIGNED").slice(0, 31), 8, "F2", brown);
     if(order.courier) text(55, 544, "COURIER: " + String(order.courier).slice(0, 36), 7.5, "F1", muted);
   }
   if(type === "invoice"){
@@ -617,9 +617,9 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(182, 559, "CURRENCY: " + String(order.original_currency || "USD"), 8, "F2", brown);
   } else {
     roundRect(M, 550, 118, 27, true, "0.94 0.90 0.84");
-    text(55, 559, "PAKET: 1", 8, "F2", brown);
+    text(55, 559, "PACKAGES: " + String(order.package_count || 1), 8, "F2", brown);
     roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
-    text(182, 559, "STATUS: PENDING", 8, "F2", brown);
+    text(182, 559, "STATUS: " + String(order.packing_status || "PENDING"), 8, "F2", brown);
   }
 
   // Table.
@@ -650,6 +650,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(50,y-18,String(index+1),8,"F1");
     let yy=y-13;
     for(const n of name.slice(0,3)){ text(82,yy,n,8,"F1"); yy-=10; }
+    if(type==="packing" && item.sku) { text(82,yy,"SKU: "+item.sku,6.8,"F1",muted); yy-=9; if(item.hs_code) { text(82,yy,"HS: "+item.hs_code,6.8,"F1",muted); yy-=9; } }
     text(type==="invoice"?365:363,y-18,String(item.quantity || 0),8,"F1");
     if(type==="invoice"){
       text(423,y-18,money(item.unit_price,item.currency),7.2,"F1");
