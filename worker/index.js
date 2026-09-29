@@ -500,6 +500,30 @@ function safePdfText(value) {
   return String(value ?? "").replace(/[^\x20-\x7E]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 __name(safePdfText, "safePdfText");
+function makeShippingLabelPdf(order, branding = {}) {
+  const W=288,H=432,cmd=[]; const brown="0.24 0.12 0.06"; const muted="0.42 0.36 0.30";
+  const esc=safePdfText; const text=(x,y,v,s=10,f="F1",c=brown)=>cmd.push(c+" rg","BT",`/${f} ${s} Tf`,`1 0 0 1 ${x} ${y} Tm`,`(${esc(v)}) Tj`,"ET");
+  const rect=(x,y,w,h,c="0.96 0.94 0.90")=>cmd.push(`q ${c} rg ${x} ${y} ${w} ${h} re f Q`);
+  rect(0,0,W,H);
+  text(24,402,String(branding.brand||"PALMA ROTAN"),20,"F2");
+  text(24,386,"SHIPPING LABEL",10,"F2",muted);
+  text(24,360,"SHIP TO",8,"F2",muted);
+  const name=(`${order.first_name||""} ${order.last_name||""}`).trim()||"-"; text(24,344,name.slice(0,34),13,"F2");
+  let address="-"; try{const p=JSON.parse(order.shipping_address_json||"{}");address=[p.address,p.city,p.state,p.postalCode,p.country].filter(Boolean).join(", ")||"-"}catch(_){};
+  text(24,326,address.slice(0,38),8,"F1");
+  if(order.email)text(24,312,String(order.email).slice(0,38),8,"F1",muted);
+  if(order.phone)text(24,298,String(order.phone).slice(0,30),8,"F1",muted);
+  rect(18,242,252,36,"0.88 0.96 0.90"); text(28,256,"COURIER: "+String(order.courier||"-"),9,"F2"); text(160,256,"PKG: "+String(order.package_count||1),9,"F2");
+  text(24,220,"TRACKING NUMBER",8,"F2",muted);
+  text(24,202,String(order.tracking_number||"NOT ASSIGNED"),15,"F2");
+  const tracking=String(order.tracking_number||order.order_number||""); if(tracking){drawCode128(cmd,24,134,240,52,tracking);text(24,120,tracking.slice(0,38),8,"F2");}
+  text(24,96,"ORDER NO.",7,"F2",muted); text(24,82,String(order.order_number||"-"),9,"F1");
+  text(150,96,"PACKING LIST",7,"F2",muted); text(150,82,String(order.packing_number||"-"),9,"F1");
+  text(24,52,"Scan barcode to identify the shipment.",7,"F1",muted);
+  const stream=cmd.join("\n")+"\n"; const objs=["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 288 432] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>","<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>","<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",`<< /Length ${new TextEncoder().encode(stream).length} >>\nstream\n${stream}endstream`];
+  let pdf="%PDF-1.4\n",offs=[0]; for(let i=0;i<objs.length;i++){offs.push(new TextEncoder().encode(pdf).length);pdf+=(i+1)+" 0 obj\n"+objs[i]+"\nendobj\n"} const xref=new TextEncoder().encode(pdf).length; pdf+="xref\n0 "+(objs.length+1)+"\n0000000000 65535 f \n"; for(let i=1;i<offs.length;i++)pdf+=String(offs[i]).padStart(10,"0")+" 00000 n \n"; pdf+="trailer\n<< /Size "+(objs.length+1)+" /Root 1 0 R >>\nstartxref\n"+xref+"\n%%EOF"; return new TextEncoder().encode(pdf);
+}
+__name(makeShippingLabelPdf,"makeShippingLabelPdf");
 function makeProfessionalPdf(type, order, items, branding = {}) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
@@ -794,7 +818,7 @@ async function documentPdf(request, env, type, orderId) {
     try { value = JSON.parse(value); } catch (_) {}
     return [row.key, value];
   }));
-  const bytes = makeProfessionalPdf(type, order, items, branding);
+  const bytes = type === "label" ? makeShippingLabelPdf(order, branding) : makeProfessionalPdf(type, order, items, branding);
   if (env.MEDIA) {
     const key = `documents/${type}/${order.order_number}.pdf`;
     await env.MEDIA.put(key, bytes, {httpMetadata:{contentType:"application/pdf",cacheControl:"private, no-store"}});
