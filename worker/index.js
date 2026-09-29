@@ -338,7 +338,15 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
   const order = await env.DB.prepare(`SELECT * FROM orders WHERE id=?`).bind(orderId).first();
   if (!order) return { ok: false, status: 404, error: "Order tidak ditemukan" };
   if (order.payment_status === "PAID") return { ok: true, alreadyPaid: true, order };
-  const items = (await env.DB.prepare(`SELECT oi.*,p.stock,p.active FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?`).bind(orderId).all()).results || [];
+  const items = (await env.DB.prepare(`SELECT oi.*,p.stock,p.active,p.weight_kg,p.dimensions_cm,p.units_per_package,p.packaging_weight_kg FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?`).bind(orderId).all()).results || [];
+  let shippingCountry="";
+  try { shippingCountry=String(JSON.parse(order.shipping_address_json||"{}").country||"").trim(); } catch (_) {}
+  const shippingCarrier=shippingCarrierForCountry(shippingCountry);
+  const trackingNumber=generatedTrackingNumber(order.order_number,shippingCarrier);
+  const packageCount=Math.max(1,items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1))),0));
+  const netWeight=items.reduce((sum,item)=>sum+(Number(item.weight_kg)||0)*(Number(item.quantity)||0),0);
+  const packagingWeight=items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1)))*(Number(item.packaging_weight_kg)||0),0);
+  const grossWeight=netWeight+packagingWeight;
   if (!items.length) return { ok: false, status: 400, error: "Order tidak memiliki item" };
 
   const provider = String(payment.provider || "manual").toLowerCase();
@@ -382,7 +390,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     env.DB.prepare(`UPDATE orders SET payment_status='PAID',order_status='PROCESSING',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(orderId),
     env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(id("hist"), orderId, "PROCESSING", "Pembayaran terverifikasi; stok dikurangi otomatis"),
     env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"), orderId, invoiceNo),
-    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,created_at) VALUES(?,?,?,'PENDING',?,?,?, ?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16), shippingCarrier, generatedTrackingNumber(orderNumber,shippingCarrier), carrierTrackingUrl(shippingCarrier,generatedTrackingNumber(orderNumber,shippingCarrier))),
+    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16), shippingCarrier, trackingNumber, carrierTrackingUrl(shippingCarrier,trackingNumber), packageCount, grossWeight, netWeight),
     env.DB.prepare(`INSERT INTO payment_audit(id,order_id,payment_id,actor,action,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
       id("pa"), orderId, paymentId, actor, "PAYMENT_VERIFIED",
       JSON.stringify({ provider: isMidtrans ? "midtrans" : "manual", method: payment.method || null, providerTransactionId: payment.providerTransactionId || null })
@@ -394,7 +402,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     console.error("PAYMENT_BATCH_ROLLBACK", { orderId, message: error?.message || String(error) });
     return { ok: false, status: 409, error: "Stok berubah atau transaksi pembayaran tidak dapat diproses" };
   }
-  const paidOrder=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.auth_code,pk.courier,pk.tracking_number,pk.tracking_url FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(orderId).first();
+  const paidOrder=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.auth_code,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.packaging_type,pk.dimensions_cm FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(orderId).first();
   if(paidOrder?.email){try{const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));await sendOrderDocumentsEmail(paidOrder,items,branding,env)}catch(error){console.error("ORDER_DOCUMENT_EMAIL_ERROR",{orderId,message:error?.message||String(error)});await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),orderId).run().catch(()=>{})}}
   return { ok: true, alreadyPaid: false, invoiceNo, packingNo };
 }
