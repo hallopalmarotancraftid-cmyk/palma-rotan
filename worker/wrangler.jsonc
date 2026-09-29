@@ -1,0 +1,22 @@
+{
+  "name": "palma-rotan-api-staging",
+  "main": "index.js",
+  "compatibility_date": "2026-09-29",
+  "keep_vars": true,
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "palma-rotan",
+      "database_id": "ca6cf35d-d789-43bd-9c94-fec94d10644b"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "palma-rotan-media-staging"
+    }
+  ]
+}
