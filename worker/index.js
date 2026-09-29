@@ -193,6 +193,9 @@ async function sendOrderDocumentsEmail(order,items,branding,env,idempotencyKey=n
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
+function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
+function sandboxTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-12);return "TEST-"+prefix+"-"+clean}
+function createSandboxShipment(order,carrier,env){const trackingNumber=sandboxTrackingNumber(order.order_number,carrier);return {trackingNumber,trackingUrl:trackingUrl(order,env),mode:"SANDBOX",test:true}}
 function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
 __name(generatedTrackingNumber,"generatedTrackingNumber");
 function carrierTrackingUrl(carrier,tracking){const t=String(tracking||"").trim();if(carrier==="J&T")return "https://www.jet.co.id/track"+(t?"?bills="+encodeURIComponent(t):"");return "https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(t)}
@@ -454,9 +457,22 @@ async function adminShipping(request,env){
   const status=String(body.status||pack.status||"PENDING").toUpperCase();
   const allowed=["PENDING","PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
   if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(env));
-  const trackingNumber=String(body.trackingNumber||"").trim()||null;
+  const autoCreateShipment=body.autoCreateShipment===true;
+  let trackingNumber=String(body.trackingNumber||"").trim()||null;
   const courier=String(body.courier||"").trim().toUpperCase()||null;
-  const trackingUrlValue=String(body.trackingUrl||"").trim() || (trackingNumber ? carrierTrackingUrl(courier,trackingNumber) : null);
+  let trackingUrlValue=String(body.trackingUrl||"").trim() || (trackingNumber ? carrierTrackingUrl(courier,trackingNumber) : null);
+  const mode=shippingMode(env);
+  let shipmentTest=false;
+  if(autoCreateShipment && !trackingNumber){
+    if(mode==="SANDBOX"){
+      const shipment=createSandboxShipment(order,courier,env);
+      trackingNumber=shipment.trackingNumber;
+      trackingUrlValue=shipment.trackingUrl;
+      shipmentTest=true;
+    }else{
+      return json({error:"Automatic production shipment belum dikonfigurasi dengan API resmi kurir. Masukkan nomor waybill resmi J&T/DHL secara manual atau konfigurasi provider resmi.",code:"SHIPPING_PROVIDER_NOT_CONFIGURED",shipmentMode:"PRODUCTION"},409,cors(env));
+    }
+  }
   if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(env));
   const country=String((await env.DB.prepare("SELECT json_extract(shipping_address_json,'$.country') AS country FROM orders WHERE id=?").bind(order.id).first())?.country||"").toLowerCase();
   const domestic=["indonesia","id","indonesia (id)"].includes(country);
@@ -479,7 +495,7 @@ async function adminShipping(request,env){
     console.error("SHIPPING_DOCUMENT_EMAIL_ERROR",{orderId:order.id,message:error?.message||String(error)});
     await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),order.id).run().catch(()=>{});
   }
-  return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env)},200,cors(env));
+  return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env),shipmentMode:mode,testShipment:shipmentTest},200,cors(env));
 }
 __name(adminShipping,"adminShipping");
 async function paymentWebhook(request, env) {
