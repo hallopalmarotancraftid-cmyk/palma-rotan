@@ -318,7 +318,7 @@ async function adminOrders(request, env) {
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
   const orders = orderRows.results || [];
   if (!orders.length) return json({ orders: [] }, 200, cors(request));
-  const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm,p.material,p.hs_code,p.package_type,p.units_per_package,p.packaging_weight_kg FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
+  const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
   const paymentRows = await env.DB.prepare(`SELECT order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at,created_at FROM payments ORDER BY created_at DESC`).all();
   const itemsByOrder = new Map();
   for (const item of itemRows.results || []) {
