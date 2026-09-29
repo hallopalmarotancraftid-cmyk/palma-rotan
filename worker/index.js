@@ -306,7 +306,8 @@ async function createOrder(request, env) {
   return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(env));
 }
 __name(createOrder, "createOrder");
-async function adminOrders(request, env) {\n  await ensureShippingSchema(env);
+async function adminOrders(request, env) {
+  await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
@@ -446,7 +447,8 @@ async function adminVerifyPayment(request, env) {
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
 
-async function adminShipping(request,env){\n  await ensureShippingSchema(env);
+async function adminShipping(request,env){
+  await ensureShippingSchema(env);
   const admin=await requireAdmin(request,env);
   if(!admin)return json({error:"Unauthorized"},401,cors(env));
   const body=await request.json().catch(()=>({}));
@@ -893,7 +895,8 @@ async function adminMedia(request, env) {
   return json({ error: "Method not allowed" }, 405, cors(env));
 }
 __name(adminMedia, "adminMedia");
-async function documentPdf(request, env, type, orderId) {\n  await ensureShippingSchema(env);
+async function documentPdf(request, env, type, orderId) {
+  await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(env));
   let ref = String(orderId || "").trim();
