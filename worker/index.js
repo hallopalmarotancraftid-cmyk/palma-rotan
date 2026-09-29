@@ -887,7 +887,7 @@ var index_default = {
     if (url.pathname === "/api/admin/payments/verify" && request.method === "POST") return adminVerifyPayment(request, env);
     if (url.pathname === "/api/admin/settings" && ["GET", "PATCH", "PUT"].includes(request.method)) return adminSettings(request, env);
     if (url.pathname === "/api/admin/media" && ["GET", "POST", "DELETE"].includes(request.method)) return adminMedia(request, env);
-    const invoiceMatch = url.pathname.match(/^\/api\/admin\/documents\/(invoice|packing)\/([^/]+)$/);
+    const invoiceMatch = url.pathname.match(/^\/api\/admin\/documents\/(invoice|packing|label)\/([^/]+)$/);
     if (invoiceMatch && request.method === "GET") return documentPdf(request, env, invoiceMatch[1], invoiceMatch[2]);
     return json({ error: "Not found" }, 404, origin);
   } catch (error) {
