@@ -189,7 +189,7 @@ async function ensurePackingAuth(orderId,env){const row=await env.DB.prepare("SE
 __name(ensurePackingAuth,"ensurePackingAuth");
 function escEmail(value){return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 __name(escEmail,"escEmail");
-async function sendOrderDocumentsEmail(order,items,branding,env){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack}; enriched.tracking_link=trackingUrl(enriched,env); const track=enriched.tracking_link,brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":"order-documents-"+order.id},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
+async function sendOrderDocumentsEmail(order,items,branding,env,idempotencyKey=null){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack}; enriched.tracking_link=trackingUrl(enriched,env); const track=enriched.tracking_link,brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":String(idempotencyKey||("order-documents-"+order.id))},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
@@ -442,11 +442,45 @@ async function adminVerifyPayment(request, env) {
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
 
-async function adminShipping(request,env){const admin=await requireAdmin(request,env);if(!admin)return json({error:"Unauthorized"},401,cors(env));const body=await request.json().catch(()=>({}));if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(env));const order=await env.DB.prepare("SELECT id,order_number,order_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(body.orderId,body.orderId).first();if(!order)return json({error:"Order tidak ditemukan"},404,cors(env));const pack=await ensurePackingAuth(order.id,env);if(!pack)return json({error:"Packing order belum tersedia"},409,cors(env));const status=String(body.status||pack.status||"PENDING").toUpperCase(),allowed=["PENDING","PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(env));const trackingNumber=String(body.trackingNumber||"").trim()||null,courier=String(body.courier||"").trim().toUpperCase()||null,trackingUrlValue=String(body.trackingUrl||"").trim()||null;
+async function adminShipping(request,env){
+  const admin=await requireAdmin(request,env);
+  if(!admin)return json({error:"Unauthorized"},401,cors(env));
+  const body=await request.json().catch(()=>({}));
+  if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(env));
+  const order=await env.DB.prepare("SELECT id,order_number,order_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(body.orderId,body.orderId).first();
+  if(!order)return json({error:"Order tidak ditemukan"},404,cors(env));
+  const pack=await ensurePackingAuth(order.id,env);
+  if(!pack)return json({error:"Packing order belum tersedia"},409,cors(env));
+  const status=String(body.status||pack.status||"PENDING").toUpperCase();
+  const allowed=["PENDING","PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
+  if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(env));
+  const trackingNumber=String(body.trackingNumber||"").trim()||null;
+  const courier=String(body.courier||"").trim().toUpperCase()||null;
+  const trackingUrlValue=String(body.trackingUrl||"").trim()||null;
   if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(env));
   const country=String((await env.DB.prepare("SELECT json_extract(shipping_address_json,'$.country') AS country FROM orders WHERE id=?").bind(order.id).first())?.country||"").toLowerCase();
   const domestic=["indonesia","id","indonesia (id)"].includes(country);
-  if((domestic&&courier!=="J&T")||(!domestic&&courier!=="DHL"))return json({error:domestic?"Order domestik wajib menggunakan J&T":"Order ekspor wajib menggunakan DHL"},400,cors(env));await env.DB.prepare("UPDATE packing_orders SET courier=?,tracking_number=?,tracking_url=?,status=?,shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END WHERE order_id=?").bind(courier,trackingNumber,trackingUrlValue,status,status,status,order.id).run();const orderStatus=status==="DELIVERED"?"DELIVERED":status==="SHIPPED"?"SHIPPED":status==="READY TO SHIP"?"READY TO SHIP":status==="PACKING"?"PACKING":order.order_status||"PROCESSING";await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(orderStatus,order.id).run();await env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),order.id,"Shipping update: "+(courier||"-")+" "+(trackingNumber||"-")).run();await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"UPDATE_SHIPPING","order",order.id,JSON.stringify({courier,trackingNumber,trackingUrl:trackingUrlValue,status})).run();return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env)},200,cors(env))}
+  if((domestic&&courier!=="J&T")||(!domestic&&courier!=="DHL"))return json({error:domestic?"Order domestik wajib menggunakan J&T":"Order ekspor wajib menggunakan DHL"},400,cors(env));
+  await env.DB.prepare("UPDATE packing_orders SET courier=?,tracking_number=?,tracking_url=?,status=?,shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END WHERE order_id=?").bind(courier,trackingNumber,trackingUrlValue,status,status,status,order.id).run();
+  const orderStatus=status==="DELIVERED"?"DELIVERED":status==="SHIPPED"?"SHIPPED":status==="READY TO SHIP"?"READY TO SHIP":status==="PACKING"?"PACKING":order.order_status||"PROCESSING";
+  await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(orderStatus,order.id).run();
+  await env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),order.id,"Shipping update: "+(courier||"-")+" "+(trackingNumber||"-")).run();
+  await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"UPDATE_SHIPPING","order",order.id,JSON.stringify({courier,trackingNumber,trackingUrl:trackingUrlValue,status})).run();
+  try{
+    const updated=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.auth_code,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.packaging_type,pk.dimensions_cm,pk.packaging_weight_kg,pk.status AS packing_status FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(order.id).first();
+    const shipItems=(await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.material,p.hs_code,p.package_type,p.units_per_package,p.packaging_weight_kg FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid").bind(order.id).all()).results||[];
+    const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','businessPhone','email','address','pdfTagline1','pdfTagline2','countryOrigin','exporter','paymentTerms','incoterms','portLoading','portDestination')").all();
+    const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));
+    if(updated){
+      updated.tracking_link=trackingUrl(updated,env);
+      await sendOrderDocumentsEmail(updated,shipItems,branding,env,"shipping-documents-"+order.id+"-"+String(trackingNumber||"none")+"-"+status);
+    }
+  }catch(error){
+    console.error("SHIPPING_DOCUMENT_EMAIL_ERROR",{orderId:order.id,message:error?.message||String(error)});
+    await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),order.id).run().catch(()=>{});
+  }
+  return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env)},200,cors(env));
+}
 __name(adminShipping,"adminShipping");
 async function paymentWebhook(request, env) {
   const serverKey = String(env.MIDTRANS_SERVER_KEY || "").trim();
@@ -580,6 +614,16 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     for(const leaf of [[31,72,0],[31,72,45],[31,72,90],[31,72,135],[31,72,180],[31,72,225],[31,72,270]]){
       const a=leaf[2]*Math.PI/180, ex=31+34*Math.cos(a), ey=72+18*Math.sin(a);
       commands.push(`${x+31*scale} ${y+72*scale} m ${x+ex*scale} ${y+ey*scale} l S`);
+    }
+  };  const barcodeSlot = (x,y,w,h,title,value) => {
+    rect(x,y,w,h,false);
+    text(x+9,y+h-14,title,7.2,"F2",muted);
+    const raw=String(value||"").slice(0,120);
+    if(raw){
+      drawCode128(commands,x+10,y+19,w-20,Math.max(25,h-43),raw);
+      text(x+9,y+6,raw.slice(0,64),6.4,"F2",brown);
+    } else {
+      text(x+9,y+7,"NOT ASSIGNED",6.4,"F2",muted);
     }
   };
 
@@ -744,16 +788,24 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(310,packY-65,"Dimensions: "+String(order.dimensions_cm||"-"),8,"F1");
   }
 
-  const barcodeValue=String(order.tracking_link || "");
-  if(barcodeValue){drawCode128(commands,M,74,W-2*M,42,barcodeValue);text(M,58,"SCAN / AUTHENTICATE ORDER / TRACKING",7,"F2",muted);text(M,46,String(order.order_number||"").slice(0,42),7,"F1",muted)}
+  // Integrated printable barcode area:
+  // Tracking barcode opens the authenticated public tracking page;
+  // Resi/Waybill barcode contains the courier tracking number;
+  // Order authentication barcode contains Order No. + Auth Code.
+  const trackingBarcodeValue=String(order.tracking_link||"");
+  const resiBarcodeValue=String(order.tracking_number||"");
+  const authBarcodeValue=order.order_number&&order.auth_code
+    ? String(order.order_number)+"|"+String(order.auth_code)
+    : String(order.order_number||"");
+  barcodeSlot(M,88,246,76,"TRACKING BARCODE",trackingBarcodeValue);
+  barcodeSlot(305,88,248,76,"RESI / WAYBILL BARCODE",resiBarcodeValue);
+  barcodeSlot(M,40,511,40,"ORDER AUTHENTICATION BARCODE",authBarcodeValue);
 
   // Footer.
-  line(M,92,W-M,92,0.8,tan);
-  palmLogo(M, 52, 0.25);
-  text(68,67,"Handcrafted Rattan",7,"F2",muted);
-  text(68,56,"Natural Materials • Crafted in Indonesia",6.5,"F1",muted);
-  text(390,67,"PALMA ROTAN",8,"F2");
-  text(390,54,"Natural Craft • Timeless Beauty",6.5,"F1",muted);
+  line(M,24,W-M,24,0.8,tan);
+  palmLogo(M, 15, 0.18);
+  text(68,24,"Handcrafted Rattan • Natural Materials • Crafted in Indonesia",6.2,"F1",muted);
+  text(390,24,"PALMA ROTAN",7,"F2");
 
   const stream=commands.join("\n")+"\n";
   const objects=[
