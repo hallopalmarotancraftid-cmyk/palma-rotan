@@ -822,8 +822,10 @@ async function documentPdf(request, env, type, orderId) {
   if (env.MEDIA) {
     const key = `documents/${type}/${order.order_number}.pdf`;
     await env.MEDIA.put(key, bytes, {httpMetadata:{contentType:"application/pdf",cacheControl:"private, no-store"}});
-    const table = type === "invoice" ? "invoices" : "packing_orders";
-    await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key,order.id).run();
+    if(type !== "label"){
+      const table = type === "invoice" ? "invoices" : "packing_orders";
+      await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key,order.id).run();
+    }
   }
   return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(env),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret"}});
 }
