@@ -317,7 +317,7 @@ async function adminOrders(request, env) {
   }
   const paymentByOrder = new Map();
   for (const payment of paymentRows.results || []) if (!paymentByOrder.has(payment.order_id)) paymentByOrder.set(payment.order_id, payment);
-  return json({orders:orders.map(order=>{const payment=paymentByOrder.get(order.id)||null;return {...order,items:itemsByOrder.get(order.id)||[],payment_method:payment?.method||null,payment_provider:payment?.provider||null,payment_transaction_id:payment?.provider_transaction_id||null,payment_reference:payment?.provider_transaction_id||null,paid_at:payment?.verified_at||null};})},200,cors(env));
+  return json({orders:orders.map(order=>{const payment=paymentByOrder.get(order.id)||null;return {...order,trackingLink:trackingUrl(order,env),items:itemsByOrder.get(order.id)||[],payment_method:payment?.method||null,payment_provider:payment?.provider||null,payment_transaction_id:payment?.provider_transaction_id||null,payment_reference:payment?.provider_transaction_id||null,paid_at:payment?.verified_at||null};})},200,cors(env));
 }
 __name(adminOrders, "adminOrders");
 async function hmacHex(secret, value) {
@@ -342,7 +342,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
   let shippingCountry="";
   try { shippingCountry=String(JSON.parse(order.shipping_address_json||"{}").country||"").trim(); } catch (_) {}
   const shippingCarrier=shippingCarrierForCountry(shippingCountry);
-  const trackingNumber=generatedTrackingNumber(order.order_number,shippingCarrier);
+  const trackingNumber=null;
   const packageCount=Math.max(1,items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1))),0));
   const netWeight=items.reduce((sum,item)=>sum+(Number(item.weight_kg)||0)*(Number(item.quantity)||0),0);
   const packagingWeight=items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1)))*(Number(item.packaging_weight_kg)||0),0);
@@ -471,7 +471,7 @@ async function adminShipping(request,env){
     const shipItems=(await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.material,p.hs_code,p.package_type,p.units_per_package,p.packaging_weight_kg FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid").bind(order.id).all()).results||[];
     const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','businessPhone','email','address','pdfTagline1','pdfTagline2','countryOrigin','exporter','paymentTerms','incoterms','portLoading','portDestination')").all();
     const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));
-    if(updated){
+    if(updated && (trackingNumber || status==="SHIPPED" || status==="DELIVERED")){
       updated.tracking_link=trackingUrl(updated,env);
       await sendOrderDocumentsEmail(updated,shipItems,branding,env,"shipping-documents-"+order.id+"-"+String(trackingNumber||"none")+"-"+status);
     }
