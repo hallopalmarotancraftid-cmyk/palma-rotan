@@ -207,7 +207,7 @@ async function createOrder(fd){
   const currency=data.settings.currency||'USD';
   for(const x of c){const p=data.products.find(p=>p.id===x.id);if(!p||x.qty<(isCustom(p)?Math.max(1,p.moq||1):1)||x.qty>p.stock){toast('Stock or MOQ changed. Please review cart.');openCart();return}}
   const shipping=shippingFee(fd.get('country'),fd.get('method'),currency);
-  const api=(window.PALMA_API_BASE||'').replace(/\/$/,'');
+  const api=(PALMA_API_BASE||'').replace(/\/$/,'');
   if(api){
     try{
       const payload={
