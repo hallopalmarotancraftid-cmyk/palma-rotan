@@ -191,6 +191,12 @@ function escEmail(value){return String(value??"").replace(/&/g,"&amp;").replace(
 __name(escEmail,"escEmail");
 async function sendOrderDocumentsEmail(order,items,branding,env){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack},track=trackingUrl(enriched,env),brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":"order-documents-"+order.id},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
+function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
+__name(shippingCarrierForCountry,"shippingCarrierForCountry");
+function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean+crypto.randomUUID().replace(/-/g,"").slice(0,8).toUpperCase()}
+__name(generatedTrackingNumber,"generatedTrackingNumber");
+function carrierTrackingUrl(carrier,tracking){return carrier==="J&T"?"https://www.jet.co.id/track":"https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(String(tracking||""))}
+__name(carrierTrackingUrl,"carrierTrackingUrl");
 async function createOrder(request, env) {
   const body = await request.json();
   if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Keranjang kosong" }, 400, cors(env));
@@ -213,6 +219,8 @@ async function createOrder(request, env) {
     subtotal += lineTotal;
     items.push({ p, qty, total: lineTotal });
   }
+  const country=String(body.shippingAddress?.country||body.customer?.country||"").trim();
+  const shippingCarrier=shippingCarrierForCountry(country);
   const shipping = Math.max(0, Number(body.shippingAmount) || 0);
   const orderId = id("ord");
   const orderNumber = `PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -274,7 +282,7 @@ async function createOrder(request, env) {
       );
       await env.DB.prepare(`UPDATE orders SET payment_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(snap.redirect_url, orderId).run();
       return json({
-        orderId, orderNumber, currency, subtotal, total, adminTotalIdr,
+        orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr,
         paymentUrl: snap.redirect_url, paymentToken: snap.token
       }, 201, cors(env));
     } catch (error) {
@@ -291,7 +299,7 @@ async function createOrder(request, env) {
       }, 502, cors(env));
     }
   }
-  return json({ orderId, orderNumber, currency, subtotal, total, adminTotalIdr }, 201, cors(env));
+  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(env));
 }
 __name(createOrder, "createOrder");
 async function adminOrders(request, env) {
@@ -374,7 +382,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     env.DB.prepare(`UPDATE orders SET payment_status='PAID',order_status='PROCESSING',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(orderId),
     env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(id("hist"), orderId, "PROCESSING", "Pembayaran terverifikasi; stok dikurangi otomatis"),
     env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"), orderId, invoiceNo),
-    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,created_at) VALUES(?,?,?,'PENDING',?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16)),
+    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,created_at) VALUES(?,?,?,'PENDING',?,?,?, ?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16), shippingCarrier, generatedTrackingNumber(orderNumber,shippingCarrier), carrierTrackingUrl(shippingCarrier,generatedTrackingNumber(orderNumber,shippingCarrier))),
     env.DB.prepare(`INSERT INTO payment_audit(id,order_id,payment_id,actor,action,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
       id("pa"), orderId, paymentId, actor, "PAYMENT_VERIFIED",
       JSON.stringify({ provider: isMidtrans ? "midtrans" : "manual", method: payment.method || null, providerTransactionId: payment.providerTransactionId || null })
