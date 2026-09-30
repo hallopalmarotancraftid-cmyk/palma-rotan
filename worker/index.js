@@ -204,6 +204,26 @@ function shippingCarrierForCountry(country){const c=String(country||"").trim().t
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
 function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
 async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}return true}
+async function ensureProductLogisticsSchema(env){
+  const defs=[
+    ["weight_kg","REAL"],
+    ["dimensions_cm","TEXT"],
+    ["material","TEXT"],
+    ["hs_code","TEXT"],
+    ["package_type","TEXT"],
+    ["units_per_package","INTEGER NOT NULL DEFAULT 1"],
+    ["packaging_weight_kg","REAL NOT NULL DEFAULT 0"]
+  ];
+  const info=await env.DB.prepare("PRAGMA table_info(products)").all();
+  const existing=new Set((info.results||[]).map(x=>x.name));
+  for(const [col,type] of defs){
+    if(existing.has(col))continue;
+    try{await env.DB.prepare("ALTER TABLE products ADD COLUMN "+col+" "+type).run()}
+    catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}
+  }
+  return true;
+}
+__name(ensureProductLogisticsSchema,"ensureProductLogisticsSchema");
 function sandboxTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-12);return "TEST-"+prefix+"-"+clean}
 function createSandboxShipment(order,carrier,env){const trackingNumber=sandboxTrackingNumber(order.order_number,carrier);return {trackingNumber,trackingUrl:trackingUrl(order,env),mode:"SANDBOX",test:true}}
 function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
@@ -327,6 +347,7 @@ async function createOrder(request, env) {
 __name(createOrder, "createOrder");
 async function adminOrders(request, env) {
   await ensureShippingSchema(env);
+  await ensureProductLogisticsSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
@@ -359,6 +380,8 @@ function timingSafeEqualHex(a, b) {
 }
 __name(timingSafeEqualHex, "timingSafeEqualHex");
 async function markOrderPaid(orderId, payment, env, actor = "system") {
+  await ensureProductLogisticsSchema(env);
+  await ensureShippingSchema(env);
   const order = await env.DB.prepare(`SELECT * FROM orders WHERE id=?`).bind(orderId).first();
   if (!order) return { ok: false, status: 404, error: "Order tidak ditemukan" };
   if (order.payment_status === "PAID") return { ok: true, alreadyPaid: true, order };
@@ -444,10 +467,16 @@ async function adminVerifyPayment(request, env) {
     return json({ ok: true, status: "REJECTED" }, 200, cors(request));
   }
 
-  const result = await markOrderPaid(body.orderId, {
-    amount: body.amount, currency: body.currency, provider: "manual",
-    method: body.method || "bank_transfer", providerTransactionId: body.transactionId || null
-  }, env, admin.email);
+  let result;
+  try {
+    result = await markOrderPaid(body.orderId, {
+      amount: body.amount, currency: body.currency, provider: "manual",
+      method: body.method || "bank_transfer", providerTransactionId: body.transactionId || null
+    }, env, admin.email);
+  } catch (error) {
+    console.error("VERIFY_PAYMENT_FATAL", {orderId:body.orderId,message:error?.message||String(error),stack:error?.stack||null});
+    return json({error:"Verifikasi pembayaran gagal: "+String(error?.message||error).slice(0,500)},500,cors(request));
+  }
   if (!result.ok) return json({ error: result.error }, result.status || 400, cors(request));
 
   try {
@@ -1055,6 +1084,7 @@ async function adminDocumentAccess(request,env){
 
 async function documentPdf(request, env, type, orderId) {
   await ensureShippingSchema(env);
+  await ensureProductLogisticsSchema(env);
   let ref = String(orderId || "").trim();
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
