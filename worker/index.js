@@ -203,7 +203,7 @@ __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
 function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
-async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}return true}
+async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}return true}
 function sandboxTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-12);return "TEST-"+prefix+"-"+clean}
 function createSandboxShipment(order,carrier,env){const trackingNumber=sandboxTrackingNumber(order.order_number,carrier);return {trackingNumber,trackingUrl:trackingUrl(order,env),mode:"SANDBOX",test:true}}
 function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
@@ -423,6 +423,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
 }
 __name(markOrderPaid, "markOrderPaid");
 async function adminVerifyPayment(request, env) {
+  await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   const body = await request.json();
@@ -449,10 +450,14 @@ async function adminVerifyPayment(request, env) {
   }, env, admin.email);
   if (!result.ok) return json({ error: result.error }, result.status || 400, cors(request));
 
-  await env.DB.prepare(`INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
-    id("audit"), admin.id, "VERIFY_PAYMENT", "order", body.orderId,
-    JSON.stringify({ transactionId: body.transactionId || null })
-  ).run();
+  try {
+    await env.DB.prepare(`INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
+      id("audit"), admin.id, "VERIFY_PAYMENT", "order", body.orderId,
+      JSON.stringify({ transactionId: body.transactionId || null })
+    ).run();
+  } catch (auditError) {
+    console.error("VERIFY_PAYMENT_AUDIT_ERROR", { orderId: body.orderId, message: auditError?.message || String(auditError) });
+  }
   return json(result, 200, cors(request));
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
