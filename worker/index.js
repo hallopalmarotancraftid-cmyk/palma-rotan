@@ -997,7 +997,9 @@ async function adminMedia(request, env) {
 }
 __name(adminMedia, "adminMedia");
 async function loadPdfOrderItems(env, order) {
-  let rows = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE CAST(oi.order_id AS TEXT)=CAST(? AS TEXT) ORDER BY oi.rowid").bind(order.id).all()).results || [];
+  // Current orders store the D1 order id in order_items.order_id. Older orders
+  // may have stored the public order number instead, so support both references.
+  let rows = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE CAST(oi.order_id AS TEXT)=CAST(? AS TEXT) OR CAST(oi.order_id AS TEXT)=CAST(? AS TEXT) ORDER BY oi.rowid").bind(order.id, order.order_number || "").all()).results || [];
   if (rows.length) return rows;
 
   // Legacy compatibility: some older orders may have stored their cart snapshot
