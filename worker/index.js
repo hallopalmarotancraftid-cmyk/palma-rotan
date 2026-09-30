@@ -163,7 +163,10 @@ __name(products, "products");
 async function adminProducts(request, env) {
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
-  if (request.method === "GET") return products(request, env);
+  // Product editor uses the logistics columns below. Ensure older D1 databases
+  // are upgraded before the INSERT/UPDATE instead of failing with "no column".
+  await ensureProductLogisticsSchema(env);
+  if (request.method === "GET") return products(request, env, true);
   const body = await request.json();
   const productId = body.id || id("prd");
   const type = ["retail", "custom", "wholesale", "oem"].includes(body.type) ? body.type : "retail";
