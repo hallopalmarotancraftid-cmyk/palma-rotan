@@ -838,7 +838,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     barcodeSlot(M+(bw+10)*2,barcodeY,bw,72,"ORDER AUTH",String(
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
-        : String(order.order_number||""));
+        : String(order.order_number||"")));
 
     const infoY=Math.max(summaryY-72,48);
     roundRect(M,infoY,W-2*M,72,false);
