@@ -9,16 +9,34 @@ function overview(){const paid=data.orders.filter(o=>['LUNAS','PAID','SETTLEMENT
 function orderTable(limit=100){return `<table class="table"><thead><tr><th>Order</th><th>Pelanggan</th><th>Total</th><th>Pembayaran</th><th>Status</th><th>Aksi</th></tr></thead><tbody>${data.orders.slice(0,limit).map(o=>`<tr><td>${o.id}</td><td>${html(o.customer.first)}<br>${html(o.customer.country)}</td><td>${orderMoney(o.total,o)}</td><td><span class="badge">${o.paymentStatus}</span></td><td><span class="badge">${o.orderStatus}</span></td><td><button class="btn" onclick="orderDetail('${o.id}')">Buka</button></td></tr>`).join('')||'<tr><td colspan="6">Belum ada pesanan.</td></tr>'}</tbody></table>`}
 function orders(){document.getElementById('app').innerHTML=`<div class="panel"><div class="toolbar"><div><h2>Pesanan Pelanggan</h2><p class="sectionNote">Data pesanan dibaca langsung dari database production. Tidak ada perubahan status yang disimpan lokal sebagai sumber utama.</p></div><button class="btn" onclick="loadProductionData()">Refresh Database</button></div>${orderTable()}</div>`}
 function orderDetail(id){const o=data.orders.find(x=>x.id===id);if(!o)return;document.getElementById('app').innerHTML=`<div class="panel"><div class="toolbar"><div><span class="eyebrow">ORDER CONTROL CENTER</span><h2>${html(o.id)}</h2></div><button class="btn" onclick="render('orders')">Kembali</button></div><div class="grid2"><div><h3>Pelanggan</h3><p>${html(o.customer?.first||'—')}<br>${html(o.customer?.email||o.email||'')}<br>${html(o.customer?.whatsapp||o.whatsapp||'')}<br>${html(o.customer?.address||o.address||'')}<br>${html(o.customer?.country||'')}</p><h3>Produk</h3>${(o.items||[]).map(i=>`<p>${html(i.name||i.product_name||i.id)} × ${i.qty||1} — ${orderMoney((Number(i.price)||0)*(Number(i.qty)||1),o)}</p>`).join('')||'<p>Detail item tidak dikirim oleh endpoint pesanan.</p>'}<p><b>Subtotal:</b> ${orderMoney(o.subtotal,o)}</p><p><b>Ongkir:</b> ${orderMoney(o.shipping,o)}</p><p><b>Total:</b> ${orderMoney(o.total,o)}</p></div><div><h3>Status Production</h3><p>Pembayaran: <b>${html(o.paymentStatus||'PENDING')}</b></p><p>Order: <b>${html(o.orderStatus||'NEW')}</b></p><p>Invoice: <b>${html(o.invoiceNo||'Belum dibuat')}</b></p><p>Packing: <b>${html(o.packingNo||'Belum dibuat')}</b></p><div class="rule"><b>Dokumen production</b><p>Invoice dan packing slip diambil dari API production, bukan dibuat dari localStorage.</p><button class="btn" onclick="openProductionDocument('invoice','${encodeURIComponent(o.productionId||o.id)}')">Invoice</button> <button class="btn" onclick="openBrandedInvoice('${encodeURIComponent(o.id)}')">Invoice Branded PDF</button> <button class="btn" onclick="openProductionDocument('packing','${encodeURIComponent(o.productionId||o.id)}')">Packing Slip</button></div></div></div></div>`}
-function showProductionPdfUrl(url,filename){
+async function showProductionPdfUrl(url,filename){
   const old=document.getElementById('productionPdfModal');
-  if(old){old.remove()}
+  if(old){if(old.dataset.objectUrl)URL.revokeObjectURL(old.dataset.objectUrl);old.remove()}
   const modal=document.createElement('div');
   modal.id='productionPdfModal';
   modal.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(20,16,12,.82);display:flex;flex-direction:column;padding:18px';
-  modal.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;color:#fff"><strong style="font-size:15px">'+html(filename)+'</strong><div style="display:flex;gap:8px"><a id="pdfDownloadBtn" class="btn" style="background:#fff;color:#211a15;text-decoration:none" href="'+html(url)+'" target="_blank" rel="noopener">Download</a><button id="pdfNewTabBtn" class="btn" style="background:#fff;color:#211a15">Tab Baru</button><button id="pdfCloseBtn" class="btn" style="background:#211a15;color:#fff">Tutup</button></div></div><iframe title="'+html(filename)+'" style="flex:1;width:100%;min-height:0;border:0;border-radius:8px;background:#fff" src="'+html(url)+'"></iframe>';
+  modal.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;color:#fff"><strong style="font-size:15px">'+html(filename)+'</strong><div style="display:flex;gap:8px"><a id="pdfDownloadBtn" class="btn" style="background:#fff;color:#211a15;text-decoration:none" href="#" download="'+html(filename)+'">Download</a><button id="pdfNewTabBtn" class="btn" style="background:#fff;color:#211a15">Tab Baru</button><button id="pdfCloseBtn" class="btn" style="background:#211a15;color:#fff">Tutup</button></div></div><div id="pdfLoading" style="flex:1;display:flex;align-items:center;justify-content:center;color:#fff;background:#fff;border-radius:8px">Memuat dokumen production…</div>';
   document.body.appendChild(modal);
-  modal.querySelector('#pdfCloseBtn').onclick=()=>modal.remove();
-  modal.querySelector('#pdfNewTabBtn').onclick=()=>{const w=window.open(url,'_blank');if(!w)alert('Browser memblokir tab baru. Gunakan tombol Download atau izinkan popup untuk situs ini.')};
+  try{
+    const r=await fetch(url,{cache:'no-store',credentials:'omit'});
+    const ct=(r.headers.get('content-type')||'').toLowerCase();
+    if(!r.ok)throw new Error('Dokumen API HTTP '+r.status);
+    if(!ct.includes('application/pdf'))throw new Error('Server tidak mengembalikan PDF');
+    const blob=await r.blob();
+    const objectUrl=URL.createObjectURL(blob);
+    modal.dataset.objectUrl=objectUrl;
+    modal.querySelector('#pdfDownloadBtn').href=objectUrl;
+    modal.querySelector('#pdfNewTabBtn').onclick=()=>{const w=window.open(objectUrl,'_blank');if(!w)alert('Browser memblokir tab baru. Gunakan tombol Download atau izinkan popup untuk situs ini.')};
+    const frame=document.createElement('iframe');
+    frame.title=filename;
+    frame.style.cssText='flex:1;width:100%;min-height:0;border:0;border-radius:8px;background:#fff';
+    frame.src=objectUrl;
+    modal.querySelector('#pdfLoading').replaceWith(frame);
+  }catch(e){
+    modal.querySelector('#pdfLoading').innerHTML='<div style="color:#8b2e24;padding:30px;text-align:center"><b>Gagal memuat PDF</b><br>'+html(e.message||e)+'</div>';
+    alert('Gagal membuka dokumen production: '+(e.message||e));
+  }
+  modal.querySelector('#pdfCloseBtn').onclick=()=>{if(modal.dataset.objectUrl)URL.revokeObjectURL(modal.dataset.objectUrl);modal.remove()};
 }
 async function openProductionDocument(type,id){
   id=decodeURIComponent(id);
