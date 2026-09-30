@@ -680,6 +680,19 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
       text(x+9,y+7,"NOT ASSIGNED",6.4,"F2",muted);
     }
   };
+  const carrierMark = (x,y,carrier) => {
+    const v=String(carrier||"").toUpperCase();
+    if(v.includes("DHL")){
+      commands.push("q 0.98 0.78 0.02 rg", x+" "+y+" 54 16 re f", "Q");
+      text(x+5,y+4,"DHL",10,"F2","0.82 0.03 0.03");
+      text(x+27,y+4,"EXPRESS",4.2,"F2","0.82 0.03 0.03");
+    } else if(v.includes("J&T") || v.includes("JNT") || v.includes("JET")){
+      text(x+2,y+4,"J&T",10,"F2","0.82 0.03 0.03");
+      text(x+23,y+4,"EXPRESS",4.2,"F2","0.82 0.03 0.03");
+    } else {
+      text(x+2,y+4,v.slice(0,14)||"-",7.5,"F2",brown);
+    }
+  };
 
   // Paper background and top brand band.
   commands.push(`q ${cream} rg 0 0 ${W} ${H} re f Q`);
@@ -739,16 +752,23 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   if(addressLines[1]) text(320,606,addressLines[1],7.5,"F1",muted);
 
   if(type === "packing"){
-    // Compact summary strip: Packages / Courier / Status.
-    roundRect(M, 548, W-2*M, 38, true, "0.94 0.90 0.84");
-    line(212, 555, 212, 579, 0.55, tan);
-    line(385, 555, 385, 579, 0.55, tan);
-    text(56, 570, "PACKAGES", 7.2, "F2", muted);
-    text(56, 555, String(order.package_count || 1), 9, "F2", brown);
-    text(232, 570, "COURIER", 7.2, "F2", muted);
-    text(232, 555, String(order.courier || order.shipping_method || "-").slice(0, 20), 9, "F2", brown);
-    text(405, 570, "STATUS", 7.2, "F2", muted);
-    text(405, 555, String(order.packing_status || "PENDING").replace(/_/g, " ").slice(0, 22), 8.5, "F2", brown);
+    roundRect(M, 510, 245, 66, false);
+    roundRect(308, 510, 245, 66, false);
+    text(54, 560, "SHIPPING INFORMATION", 7.5, "F2", muted);
+    text(54, 544, "Courier", 7.2, "F1", muted);
+    carrierMark(112, 539, order.courier || order.shipping_method || "");
+    text(54, 530, "Tracking No.", 7.2, "F1", muted);
+    text(112, 530, String(order.tracking_number||"-").slice(0,23), 7.0, "F1");
+    text(54, 516, "Total Net Weight", 7.2, "F1", muted);
+    text(112, 516, Number(order.net_weight_kg||0).toFixed(2)+" kg", 7.0, "F1");
+
+    text(320, 560, "PACKAGE SUMMARY", 7.5, "F2", muted);
+    text(320, 544, "Packages", 7.2, "F1", muted);
+    text(390, 544, String(order.package_count||1), 7.0, "F1");
+    text(320, 530, "Package Type", 7.2, "F1", muted);
+    text(390, 530, String(order.packaging_type||"-").slice(0,22), 7.0, "F1");
+    text(320, 516, "Status", 7.2, "F1", muted);
+    text(390, 516, String(order.packing_status||"PENDING").replace(/_/g," ").slice(0,20), 7.0, "F1");
   }
   if(type === "invoice"){
     roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
@@ -768,7 +788,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   }
 
   // Table.
-  let y=520;
+  let y=490;
   const cols = type === "invoice"
     ? [M,70,350,415,490,W-M]
     : [M,70,350,405,465,525,W-M];
@@ -827,35 +847,32 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     const totalNet=items.reduce((s,it)=>s+(Number(it.weight_kg)||0)*(Number(it.quantity)||0),0);
     const packageWeight=Number(order.packaging_weight_kg)||0;
     const gross=Number(order.gross_weight_kg)||totalNet+packageWeight;
-
-    // Keep the barcode block and summary together after the product table.
-    const barcodeY=Math.max(y-92,125);
-    const summaryY=barcodeY-16;
-
+    const barcodeY=Math.max(y-8,205);
     const bw=(W-2*M-20)/3;
-    barcodeSlot(M,barcodeY,bw,72,"TRACKING",String(order.tracking_link||""));
-    barcodeSlot(M+bw+10,barcodeY,bw,72,"RESI / WAYBILL",String(order.tracking_number||""));
-    barcodeSlot(M+(bw+10)*2,barcodeY,bw,72,"ORDER AUTH",String(
+    barcodeSlot(M,barcodeY,bw,72,"TRACKING BARCODE",String(order.tracking_link||""));
+    barcodeSlot(M+bw+10,barcodeY,bw,72,"RESI / WAYBILL BARCODE",String(order.tracking_number||""));
+    barcodeSlot(M+(bw+10)*2,barcodeY,bw,72,"ORDER AUTHENTICATION BARCODE",
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
-        : String(order.order_number||"")));
-
-    const infoY=Math.max(summaryY-72,48);
-    roundRect(M,infoY,W-2*M,72,false);
-    line(302,infoY+8,302,infoY+64,0.55,tan);
-    text(55,infoY+57,"SHIPPING INFORMATION",7.5,"F2",muted);
-    text(55,infoY+40,"Courier: "+String(order.courier||order.shipping_method||"-").slice(0,28),7.2,"F1");
-    text(55,infoY+26,"Tracking No.: "+String(order.tracking_number||"-").slice(0,28),7.2,"F1");
-    text(55,infoY+12,"Total Net Weight: "+totalNet.toFixed(2)+" kg",7.2,"F1");
-    text(55,infoY-2,"Total Gross Weight: "+gross.toFixed(2)+" kg",7.2,"F1");
-
-    text(320,infoY+57,"PACKAGE SUMMARY",7.5,"F2",muted);
-    text(320,infoY+40,"Packages: "+String(order.package_count||1),7.2,"F1");
-    text(320,infoY+26,"Package Type: "+String(order.packaging_type||"-").slice(0,28),7.2,"F1");
-    text(320,infoY+12,"Dimensions: "+String(order.dimensions_cm||"-").slice(0,28),7.2,"F1");
-    text(320,infoY-2,"Status: "+String(order.packing_status||"PENDING").replace(/_/g," ").slice(0,24),7.2,"F1");
+        : String(order.order_number||""));
+    const infoY=Math.max(barcodeY-92,92);
+    roundRect(M,infoY,W-2*M,62,false);
+    line(302,infoY+8,302,infoY+54,0.55,tan);
+    text(55,infoY+47,"SHIPPING INFORMATION",7.5,"F2",muted);
+    text(55,infoY+30,"Courier",7.2,"F1",muted);
+    carrierMark(112,infoY+25,order.courier||order.shipping_method||"");
+    text(55,infoY+15,"Tracking No.",7.2,"F1",muted);
+    text(112,infoY+15,String(order.tracking_number||"-").slice(0,25),7.0,"F1");
+    text(55,infoY+2,"Total Net Weight",7.2,"F1",muted);
+    text(112,infoY+2,totalNet.toFixed(2)+" kg",7.0,"F1");
+    text(320,infoY+47,"PACKAGE SUMMARY",7.5,"F2",muted);
+    text(320,infoY+30,"Packages",7.2,"F1",muted);
+    text(390,infoY+30,String(order.package_count||1),7.0,"F1");
+    text(320,infoY+15,"Package Type",7.2,"F1",muted);
+    text(390,infoY+15,String(order.packaging_type||"-").slice(0,22),7.0,"F1");
+    text(320,infoY+2,"Total Gross Weight",7.2,"F1",muted);
+    text(390,infoY+2,gross.toFixed(2)+" kg",7.0,"F1");
   } else {
-    // Invoice barcodes remain in their existing footer position.
     const trackingBarcodeValue=String(order.tracking_link||"");
     const resiBarcodeValue=String(order.tracking_number||"");
     const authBarcodeValue=order.order_number&&order.auth_code
@@ -865,7 +882,6 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     barcodeSlot(305,88,248,76,"RESI / WAYBILL BARCODE",resiBarcodeValue);
     barcodeSlot(M,40,511,40,"ORDER AUTHENTICATION BARCODE",authBarcodeValue);
   }
-
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
