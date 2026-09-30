@@ -5,7 +5,8 @@ var __name = (target, value) => __defProp(target, "name", { value, configurable:
 // src/index.js
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
-  if (origin === "https://palma-rotan.pages.dev" || origin === "https://palmarotancraft-staging.pages.dev") return origin;
+  const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
+  if (isPagesOrigin || origin === "https://palmarotancraft-staging.pages.dev") return origin;
   return "https://palma-rotan.pages.dev";
 }, "cors");
 var json = /* @__PURE__ */ __name((data, status = 200, origin = "*") => new Response(JSON.stringify(data), {
