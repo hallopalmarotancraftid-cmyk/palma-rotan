@@ -280,6 +280,16 @@ async function createOrder(request, env) {
     )
   );
   await env.DB.batch(statements);
+  const persistedItemCount = Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM order_items WHERE order_id=?").bind(orderId).first())?.n || 0);
+  if (persistedItemCount !== items.length) {
+    console.error("ORDER_ITEMS_PERSISTENCE_MISMATCH", {
+      orderId,
+      orderNumber,
+      expected: items.length,
+      persisted: persistedItemCount
+    });
+    return json({ error: "Data item pesanan gagal disimpan dengan lengkap", orderId, orderNumber }, 500, cors(request));
+  }
 
   const requestedGateway = String(body.paymentGateway || body.paymentMethod || "").toLowerCase();
   const useMidtrans = ["gateway", "midtrans", "snap", "payment gateway"].includes(requestedGateway);
@@ -955,6 +965,55 @@ async function adminMedia(request, env) {
   return json({ error: "Method not allowed" }, 405, cors(request));
 }
 __name(adminMedia, "adminMedia");
+async function loadPdfOrderItems(env, order) {
+  let rows = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE CAST(oi.order_id AS TEXT)=CAST(? AS TEXT) ORDER BY oi.rowid").bind(order.id).all()).results || [];
+  if (rows.length) return rows;
+
+  // Legacy compatibility: some older orders may have stored their cart snapshot
+  // directly on the orders row instead of creating order_items rows.
+  try {
+    const columns = await env.DB.prepare("PRAGMA table_info(orders)").all();
+    const available = new Set((columns.results || []).map(x => String(x.name || "")));
+    const candidates = ["items_json","cart_json","line_items_json","products_json","order_items_json","items"];
+    for (const column of candidates) {
+      if (!available.has(column)) continue;
+      const row = await env.DB.prepare("SELECT \"" + column + "\" AS snapshot FROM orders WHERE id=? LIMIT 1").bind(order.id).first();
+      if (!row?.snapshot) continue;
+      let parsed;
+      try { parsed = typeof row.snapshot === "string" ? JSON.parse(row.snapshot) : row.snapshot; } catch (_) { parsed = null; }
+      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : Array.isArray(parsed?.products) ? parsed.products : [];
+      if (!list.length) continue;
+      rows = list.map((item, index) => ({
+        id: item.id || ("legacy_item_" + index),
+        order_id: order.id,
+        product_id: item.product_id || item.productId || null,
+        product_name: item.product_name || item.productName || item.name || "Product",
+        name: item.name || item.product_name || item.productName || "Product",
+        quantity: Number(item.quantity ?? item.qty ?? 0),
+        qty: Number(item.qty ?? item.quantity ?? 0),
+        unit_price: Number(item.unit_price ?? item.price ?? 0),
+        price: Number(item.price ?? item.unit_price ?? 0),
+        total_price: Number(item.total_price ?? item.total ?? 0),
+        currency: item.currency || order.original_currency || "USD",
+        weight_kg: Number(item.weight_kg || 0),
+        dimensions_cm: item.dimensions_cm || "",
+        sku: item.sku || "",
+        material: item.material || "",
+        hs_code: item.hs_code || item.hsCode || "",
+        package_type: item.package_type || item.packageType || ""
+      }));
+      return rows;
+    }
+  } catch (error) {
+    console.error("PDF_LEGACY_ITEM_FALLBACK_ERROR", {
+      orderId: order?.id,
+      message: error?.message || String(error)
+    });
+  }
+  return [];
+}
+__name(loadPdfOrderItems, "loadPdfOrderItems");
+
 async function documentPdf(request, env, type, orderId) {
   await ensureShippingSchema(env);
   const admin = await requireAdmin(request, env);
@@ -968,7 +1027,7 @@ async function documentPdf(request, env, type, orderId) {
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
   order.tracking_link=trackingUrl(order,env);
-  const items = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid").bind(order.id).all()).results || [];
+  const items = await loadPdfOrderItems(env, order);
   const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
   const branding = Object.fromEntries((brandRows.results || []).map((row) => {
     let value = row.value_json;
