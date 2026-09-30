@@ -3,6 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
+var BUILD_ID = "2026-09-30-pdf-link-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1146,7 +1147,7 @@ var index_default = {
   }
   const url = new URL(request.url);
   try {
-    if (url.pathname === "/api/health") return json({ ok: true, environment: env.ENVIRONMENT || "unknown" }, 200, origin);
+    if (url.pathname === "/api/health") return json({ ok: true, environment: env.ENVIRONMENT || "unknown", build: BUILD_ID }, 200, origin);
     if (url.pathname.startsWith("/media/") && request.method === "GET") return publicMedia(request, env, url.pathname.slice("/media/".length));
     if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
     if (url.pathname === "/api/auth/bootstrap" && request.method === "POST") return bootstrap(request, env);
