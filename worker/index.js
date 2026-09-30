@@ -1015,8 +1015,8 @@ async function loadPdfOrderItems(env, order) {
 }
 __name(loadPdfOrderItems, "loadPdfOrderItems");
 
-function base64Url(value){return btoa(value).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"")} 
-function base64UrlDecode(value){const s=String(value||"").replace(/-/g,"+").replace(/_/g,"/");return atob(s+"=".repeat((4-s.length%4)%4))}
+function base64Url(value){return btoa(value)}
+function base64UrlDecode(value){return atob(String(value||""))}
 async function createDocumentAccessToken(env,type,ref){
   const secret=String(env.AUTH_PEPPER||"").trim();
   if(!secret) throw new Error("AUTH_PEPPER belum dikonfigurasi");
