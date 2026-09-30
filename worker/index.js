@@ -1015,11 +1015,53 @@ async function loadPdfOrderItems(env, order) {
 }
 __name(loadPdfOrderItems, "loadPdfOrderItems");
 
+function base64Url(value){return btoa(value).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"")} 
+function base64UrlDecode(value){const s=String(value||"").replace(/-/g,"+").replace(/_/g,"/");return atob(s+"=".repeat((4-s.length%4)%4))}
+async function createDocumentAccessToken(env,type,ref){
+  const secret=String(env.AUTH_PEPPER||"").trim();
+  if(!secret) throw new Error("AUTH_PEPPER belum dikonfigurasi");
+  const payload=encodeURIComponent(JSON.stringify({type:String(type),ref:String(ref),exp:Date.now()+5*60*1000}));
+  const sig=await sha256(secret+"|document|"+payload);
+  return base64Url(payload+"."+sig);
+}
+async function verifyDocumentAccessToken(env,token,type,ref){
+  const secret=String(env.AUTH_PEPPER||"").trim();
+  if(!secret||!token)return false;
+  try{
+    const raw=base64UrlDecode(token);
+    const dot=raw.lastIndexOf(".");
+    if(dot<1)return false;
+    const payload=raw.slice(0,dot),sig=raw.slice(dot+1);
+    const expected=await sha256(secret+"|document|"+payload);
+    if(sig!==expected)return false;
+    const data=JSON.parse(decodeURIComponent(payload));
+    return data?.type===String(type)&&data?.ref===String(ref)&&Number(data?.exp)>Date.now();
+  }catch(_){return false}
+}
+async function adminDocumentAccess(request,env){
+  const admin=await requireAdmin(request,env);
+  if(!admin)return json({error:"Unauthorized"},401,cors(request));
+  const body=await request.json().catch(()=>({}));
+  const type=["invoice","packing","label"].includes(String(body.type))?String(body.type):"";
+  const ref=String(body.ref||"").trim();
+  if(!type||!ref)return json({error:"Jenis dokumen dan order reference wajib diisi"},400,cors(request));
+  let decoded=ref;try{decoded=decodeURIComponent(ref)}catch(_){}
+  const order=await env.DB.prepare("SELECT id FROM orders WHERE id=? OR order_number=? OR lower(order_number)=lower(?) LIMIT 1").bind(decoded,decoded,decoded).first();
+  if(!order)return json({error:"Order tidak ditemukan",reference:decoded},404,cors(request));
+  const token=await createDocumentAccessToken(env,type,decoded);
+  const url=new URL(request.url);
+  url.pathname="/api/admin/documents/"+type+"/"+encodeURIComponent(decoded);
+  url.search="?access_token="+encodeURIComponent(token);
+  return json({ok:true,url:url.toString(),expiresInSeconds:300},200,cors(request));
+}
+
 async function documentPdf(request, env, type, orderId) {
   await ensureShippingSchema(env);
-  const admin = await requireAdmin(request, env);
-  if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
   let ref = String(orderId || "").trim();
+  const accessToken = new URL(request.url).searchParams.get("access_token") || "";
+  const admin = await requireAdmin(request, env);
+  const authorizedByLink = await verifyDocumentAccessToken(env, accessToken, type, ref);
+  if (!admin && !authorizedByLink) return json({ error: "Unauthorized" }, 401, cors(request));
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
@@ -1120,6 +1162,7 @@ var index_default = {
     if (url.pathname === "/api/admin/payments/verify" && request.method === "POST") return adminVerifyPayment(request, env);
     if (url.pathname === "/api/admin/settings" && ["GET", "PATCH", "PUT"].includes(request.method)) return adminSettings(request, env);
     if (url.pathname === "/api/admin/media" && ["GET", "POST", "DELETE"].includes(request.method)) return adminMedia(request, env);
+    if (url.pathname === "/api/admin/documents/access" && request.method === "POST") return adminDocumentAccess(request, env);
     const invoiceMatch = url.pathname.match(/^\/api\/admin\/documents\/(invoice|packing|label)\/([^/]+)$/);
     if (invoiceMatch && request.method === "GET") return documentPdf(request, env, invoiceMatch[1], invoiceMatch[2]);
     return json({ error: "Not found" }, 404, origin);
