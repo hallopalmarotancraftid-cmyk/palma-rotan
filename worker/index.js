@@ -632,13 +632,26 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     if(cur) out.push(cur); return out.length?out:["-"];
   };
   const palmLogo = (x,y,scale=1) => {
-    commands.push(`${brown} RG ${brown} rg 1.5 w`);
-    commands.push(`${x+10*scale} ${y} m ${x+15*scale} ${y+38*scale} ${x+22*scale} ${y+58*scale} ${x+31*scale} ${y+72*scale} c S`);
-    commands.push(`${x+10*scale} ${y} m ${x+30*scale} ${y-2*scale} ${x+38*scale} ${y+2*scale} ${x+42*scale} ${y+6*scale} c S`);
-    for(const leaf of [[31,72,0],[31,72,45],[31,72,90],[31,72,135],[31,72,180],[31,72,225],[31,72,270]]){
-      const a=leaf[2]*Math.PI/180, ex=31+34*Math.cos(a), ey=72+18*Math.sin(a);
-      commands.push(`${x+31*scale} ${y+72*scale} m ${x+ex*scale} ${y+ey*scale} l S`);
+    commands.push(`${brown} RG ${brown} rg 1.35 w`);
+    // Curved line-art palm matching the approved PALMA ROTAN logo.
+    commands.push(`${x+8*scale} ${y+1*scale} m ${x+16*scale} ${y+18*scale} ${x+22*scale} ${y+47*scale} ${x+30*scale} ${y+72*scale} c S`);
+    commands.push(`${x+8*scale} ${y+1*scale} m ${x+18*scale} ${y-1*scale} ${x+28*scale} ${y+2*scale} ${x+36*scale} ${y+7*scale} c S`);
+    commands.push(`${x+8*scale} ${y+2*scale} m ${x+3*scale} ${y+7*scale} ${x+1*scale} ${y+10*scale} ${x} ${y+13*scale} c S`);
+    const fronds=[
+      [[30,72],[18,75],[8,82],[-1,91]],
+      [[30,72],[20,84],[10,96],[5,108]],
+      [[30,72],[27,88],[22,103],[17,112]],
+      [[30,72],[34,88],[38,101],[42,111]],
+      [[30,72],[43,82],[56,89],[66,91]],
+      [[30,72],[45,75],[59,76],[70,73]],
+      [[30,72],[46,69],[60,63],[68,56]],
+      [[30,72],[39,65],[47,54],[50,43]]
+    ];
+    for(const f of fronds){
+      const p=f.map(([px,py])=>[x+px*scale,y+py*scale]);
+      commands.push(`${p[0][0]} ${p[0][1]} m ${p[1][0]} ${p[1][1]} ${p[2][0]} ${p[2][1]} ${p[3][0]} ${p[3][1]} c S`);
     }
+    commands.push(`${x+30*scale} ${y+72*scale} m ${x+29*scale} ${y+83*scale} ${x+27*scale} ${y+94*scale} ${x+24*scale} ${y+103*scale} c S`);
   };  const barcodeSlot = (x,y,w,h,title,value) => {
     rect(x,y,w,h,false);
     text(x+9,y+h-14,title,7.2,"F2",muted);
@@ -654,10 +667,9 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   // Paper background and top brand band.
   commands.push(`q ${cream} rg 0 0 ${W} ${H} re f Q`);
   commands.push(`q 0.985 0.975 0.95 rg 0 ${H-108} ${W} 108 re f Q`);
-  const brand = String(branding.brand || "PALMA ROTAN").trim() || "PALMA ROTAN";
-  const brandWords = brand.split(/\s+/);
-  const brandLine1 = brandWords.slice(0, Math.max(1, Math.ceil(brandWords.length / 2))).join(" ");
-  const brandLine2 = brandWords.slice(Math.max(1, Math.ceil(brandWords.length / 2))).join(" ");
+  const brand = "PALMA ROTAN";
+  const brandLine1 = "PALMA";
+  const brandLine2 = "ROTAN";
   const tagline1 = String(branding.pdfTagline1 || "NATURAL CRAFT");
   const tagline2 = String(branding.pdfTagline2 || "TIMELESS BEAUTY");
   const website = String(branding.website || "palmarotancraft.id");
@@ -671,8 +683,8 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   const portDestination = String(branding.portDestination || "");
   const address = String(branding.address || "Jl. Rotan Jaya, Ds. Teluk Wetan, RT 07/RW 01, Kec. Welahan, Kab. Jepara, Prov. Jawa Tengah, Indonesia");
   palmLogo(M, 760, 0.62);
-  text(88, 795, brandLine1.slice(0, 18), 25, "F2");
-  if (brandLine2) text(88, 770, brandLine2.slice(0, 18), 25, "F2");
+  text(88, 795, brandLine1, 24, "F1");
+  if (brandLine2) text(88, 770, brandLine2, 24, "F1");
   line(205, 772, 205, 808, 0.8, tan);
   text(220, 797, tagline1.slice(0, 24), 8, "F2", muted);
   text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
