@@ -2,7 +2,8 @@
 {
   "name": "palma-rotan-api-staging",
   "main": "index.js",
-  "compatibility_date": "2026-09-29",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
   "keep_vars": true,
   "observability": {
     "enabled": true
