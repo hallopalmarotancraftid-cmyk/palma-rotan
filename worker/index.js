@@ -908,7 +908,7 @@ async function documentPdf(request, env, type, orderId) {
   try { ref = decodeURIComponent(ref); } catch (_) {}
   ref = ref.replace(/^#/, "").trim();
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.packaging_weight_kg,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.status AS packing_status,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(request));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
@@ -921,12 +921,14 @@ async function documentPdf(request, env, type, orderId) {
     return [row.key, value];
   }));
   const bytes = type === "label" ? makeShippingLabelPdf(order, branding) : makeProfessionalPdf(type, order, items, branding);
+  // PDF delivery is independent of optional R2 storage.
+  // R2 persistence must never prevent the production document from opening.
   if (env.MEDIA) {
-    const key = `documents/${type}/${order.order_number}.pdf`;
-    await env.MEDIA.put(key, bytes, {httpMetadata:{contentType:"application/pdf",cacheControl:"private, no-store"}});
-    if(type !== "label"){
-      const table = type === "invoice" ? "invoices" : "packing_orders";
-      await env.DB.prepare(`UPDATE ${table} SET pdf_key=? WHERE order_id=?`).bind(key,order.id).run();
+    try {
+      const key = `documents/${type}/${order.order_number}.pdf`;
+      await env.MEDIA.put(key, bytes, {httpMetadata:{contentType:"application/pdf",cacheControl:"private, no-store"}});
+    } catch (storageError) {
+      console.error("PDF_R2_STORE_ERROR", {type, orderId: order.id, message: storageError?.message || String(storageError)});
     }
   }
   return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(request),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret"}});
