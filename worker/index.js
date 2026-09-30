@@ -819,14 +819,6 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(482,y-51,money(total,cur),9,"F2");
     text(M,205,"Payment Method",8,"F2",muted);
     text(M,189,"Midtrans / Payment Gateway",8.5,"F1");
-  } else {
-    const dy=Math.max(y-8,235);
-    text(M,dy,"SHIPPING INFORMATION",8,"F2",muted);
-    text(M,dy-17,"Courier: " + (order.courier || order.shipping_method || "-"),8,"F1");
-    text(M,dy-32,"Tracking No.: " + (order.tracking_number || "-"),8,"F1");
-    text(310,dy,"PACKAGE SUMMARY",8,"F2",muted);
-    text(310,dy-17,"Packages: " + String(order.package_count || 1),8,"F1");
-    text(310,dy-32,"Status: " + String(order.packing_status || "PENDING"),8,"F1");
   }
 
   // Packing List: barcode row is placed directly above the weight/shipping
@@ -837,13 +829,13 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     const gross=Number(order.gross_weight_kg)||totalNet+packageWeight;
 
     // Keep the barcode block and summary together after the product table.
-    const barcodeY=Math.max(y-88,118);
-    const summaryY=barcodeY-18;
+    const barcodeY=Math.max(y-92,125);
+    const summaryY=barcodeY-16;
 
     const bw=(W-2*M-20)/3;
-    barcodeSlot(M,barcodeY,bw,68,"TRACKING BARCODE",String(order.tracking_link||""));
-    barcodeSlot(M+bw+10,barcodeY,bw,68,"RESI / WAYBILL BARCODE",String(order.tracking_number||""));
-    barcodeSlot(M+(bw+10)*2,barcodeY,bw,68,"ORDER AUTHENTICATION BARCODE",
+    barcodeSlot(M,barcodeY,bw,72,"TRACKING",String(order.tracking_link||""));
+    barcodeSlot(M+bw+10,barcodeY,bw,72,"RESI / WAYBILL",String(order.tracking_number||""));
+    barcodeSlot(M+(bw+10)*2,barcodeY,bw,72,"ORDER AUTH",String(
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
         : String(order.order_number||""));
