@@ -680,17 +680,18 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
       text(x+9,y+7,"NOT ASSIGNED",6.4,"F2",muted);
     }
   };
+  // Compact carrier mark: only the mark is rendered beside "Courier";
+  // no separate courier name is printed, so it cannot overlap the logo area.
   const carrierMark = (x,y,carrier) => {
     const v=String(carrier||"").toUpperCase();
     if(v.includes("DHL")){
-      commands.push("q 0.98 0.78 0.02 rg", x+" "+y+" 54 16 re f", "Q");
-      text(x+5,y+4,"DHL",10,"F2","0.82 0.03 0.03");
-      text(x+27,y+4,"EXPRESS",4.2,"F2","0.82 0.03 0.03");
+      commands.push("q 0.98 0.78 0.02 rg", x+" "+y+" 42 15 re f", "Q");
+      text(x+5,y+4,"DHL",9,"F2","0.82 0.03 0.03");
     } else if(v.includes("J&T") || v.includes("JNT") || v.includes("JET")){
-      text(x+2,y+4,"J&T",10,"F2","0.82 0.03 0.03");
-      text(x+23,y+4,"EXPRESS",4.2,"F2","0.82 0.03 0.03");
+      commands.push("q 0.82 0.03 0.03 rg", x+" "+y+" 42 15 re f", "Q");
+      text(x+5,y+4,"J&T",9,"F2","1 1 1");
     } else {
-      text(x+2,y+4,v.slice(0,14)||"-",7.5,"F2",brown);
+      text(x+2,y+4,v.slice(0,10)||"-",7.2,"F2",brown);
     }
   };
 
@@ -847,7 +848,8 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     const totalNet=items.reduce((s,it)=>s+(Number(it.weight_kg)||0)*(Number(it.quantity)||0),0);
     const packageWeight=Number(order.packaging_weight_kg)||0;
     const gross=Number(order.gross_weight_kg)||totalNet+packageWeight;
-    const barcodeY=Math.max(y-8,205);
+    // Keep the barcode row below the last product row, never over the table.
+    const barcodeY=Math.max(y-82,92);
     const bw=(W-2*M-20)/3;
     barcodeSlot(M,barcodeY,bw,72,"TRACKING BARCODE",String(order.tracking_link||""));
     barcodeSlot(M+bw+10,barcodeY,bw,72,"RESI / WAYBILL BARCODE",String(order.tracking_number||""));
@@ -855,23 +857,9 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
         : String(order.order_number||""));
-    const infoY=Math.max(barcodeY-92,92);
-    roundRect(M,infoY,W-2*M,62,false);
-    line(302,infoY+8,302,infoY+54,0.55,tan);
-    text(55,infoY+47,"SHIPPING INFORMATION",7.5,"F2",muted);
-    text(55,infoY+30,"Courier",7.2,"F1",muted);
-    carrierMark(112,infoY+25,order.courier||order.shipping_method||"");
-    text(55,infoY+15,"Tracking No.",7.2,"F1",muted);
-    text(112,infoY+15,String(order.tracking_number||"-").slice(0,25),7.0,"F1");
-    text(55,infoY+2,"Total Net Weight",7.2,"F1",muted);
-    text(112,infoY+2,totalNet.toFixed(2)+" kg",7.0,"F1");
-    text(320,infoY+47,"PACKAGE SUMMARY",7.5,"F2",muted);
-    text(320,infoY+30,"Packages",7.2,"F1",muted);
-    text(390,infoY+30,String(order.package_count||1),7.0,"F1");
-    text(320,infoY+15,"Package Type",7.2,"F1",muted);
-    text(390,infoY+15,String(order.packaging_type||"-").slice(0,22),7.0,"F1");
-    text(320,infoY+2,"Total Gross Weight",7.2,"F1",muted);
-    text(390,infoY+2,gross.toFixed(2)+" kg",7.0,"F1");
+    // Shipping Information and Package Summary are intentionally kept
+    // directly under BILL TO / SHIPMENT above. Do not duplicate them here.
+    // This area is reserved for the barcode row and clean document footer.
   } else {
     const trackingBarcodeValue=String(order.tracking_link||"");
     const resiBarcodeValue=String(order.tracking_number||"");
