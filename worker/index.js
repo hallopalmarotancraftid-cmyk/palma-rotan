@@ -7,7 +7,8 @@ var BUILD_ID = "2026-09-30-admin-api-2";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
-  if (isPagesOrigin || origin === "https://palmarotancraft-staging.pages.dev") return origin;
+  const isPalmaDomain = /^https:\/\/([a-z0-9-]+\.)?palmarotancraft\.id$/i.test(origin);
+  if (isPagesOrigin || isPalmaDomain || origin === "https://palmarotancraft-staging.pages.dev") return origin;
   return "https://palma-rotan.pages.dev";
 }, "cors");
 var json = /* @__PURE__ */ __name((data, status = 200, origin = "*") => new Response(JSON.stringify(data), {
