@@ -393,15 +393,6 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
       payment.method || (isMidtrans ? "snap" : "bank_transfer"), payment.providerTransactionId || null,
       paymentAmount, paymentCurrency, "PAID"
     ),
-    env.DB.prepare(`INSERT INTO products(id,sku,type,stock,moq,active)
-      SELECT p.id,p.sku,p.type,p.stock,p.moq,p.active
-      FROM products p
-      WHERE EXISTS (
-        SELECT 1 FROM order_items oi
-        JOIN products px ON px.id=oi.product_id
-        WHERE oi.order_id=? AND px.stock < oi.quantity
-      )
-      AND p.id IN (SELECT product_id FROM order_items WHERE order_id=? LIMIT 1)`).bind(orderId, orderId)
   ];
   for (const item of items) {
     statements.push(env.DB.prepare(`UPDATE products SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND stock>=?`).bind(item.quantity, item.product_id, item.quantity));
