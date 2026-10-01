@@ -961,7 +961,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.alpha.length} >>\nstream\n`,data:logoImage.alpha,tail:"\nendstream"});
   if(qrImage){
     addObj(10,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${qrImage.width} >> /SMask 11 0 R /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
-    addObj(11,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.alpha.length} >>\nstream\n`,data:qrImage.alpha,tail:"\nendstream"});
+    addObj(11,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.alpha.length} >>\nstream\n`,data:qrImage.alpha,tail:"\nendstream"});
   }
   const xref=total;
   addText("xref\n0 12\n0000000000 65535 f \n");
