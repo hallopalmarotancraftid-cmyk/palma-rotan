@@ -17,6 +17,7 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('woocommerce_order_status_processing', [__CLASS__, 'documents_on_paid']);
         add_action('woocommerce_order_status_completed', [__CLASS__, 'documents_on_paid']);
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
+        add_action('admin_post_palma_save_tracking', [__CLASS__, 'save_tracking']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
     }
 
@@ -228,6 +229,10 @@ final class Palma_Rotan_Commerce_Bridge {
             'subtotal'=>(float)$order->get_subtotal(),
             'shippingAmount'=>(float)$order->get_shipping_total(),
             'total'=>(float)$order->get_total(),
+            'shippingMethod'=>(string)$order->get_shipping_method(),
+            'shippingCarrier'=>(string)$order->get_meta('_palma_shipping_carrier'),
+            'trackingNumber'=>(string)$order->get_meta('_palma_tracking_number'),
+            'trackingUrl'=>(string)$order->get_meta('_palma_tracking_url'),
             'invoiceUrl'=>$order->is_paid() ? rest_url(self::REST_NS.'/document/invoice/'.$order->get_id()).'?key='.rawurlencode($order->get_order_key()) : '',
             'packingUrl'=>$order->is_paid() ? rest_url(self::REST_NS.'/document/packing/'.$order->get_id()).'?key='.rawurlencode($order->get_order_key()) : '',
         ];
@@ -334,6 +339,24 @@ final class Palma_Rotan_Commerce_Bridge {
         add_menu_page('PALMA ROTAN Orders','PALMA Orders','manage_woocommerce','palma-orders',[__CLASS__,'admin_page'],'dashicons-store',56);
     }
 
+    public static function save_tracking() {
+        if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', '', ['response'=>403]);
+        $order_id=absint($_GET['order_id'] ?? 0);
+        check_admin_referer('palma_save_tracking_'.$order_id);
+        $order=wc_get_order($order_id);
+        if(!$order) wp_die('Order tidak ditemukan.', '', ['response'=>404]);
+        $tracking=sanitize_text_field(wp_unslash($_POST['tracking_number'] ?? ''));
+        $url=esc_url_raw(wp_unslash($_POST['tracking_url'] ?? ''));
+        $carrier=(string)$order->get_meta('_palma_shipping_carrier');
+        if($carrier==='') $carrier=strtoupper($order->get_shipping_country())==='ID'?'J&T':'DHL';
+        $order->update_meta_data('_palma_tracking_number',$tracking);
+        $order->update_meta_data('_palma_tracking_url',$url);
+        $order->update_meta_data('_palma_shipping_carrier',$carrier);
+        $order->save();
+        wp_safe_redirect(admin_url('admin.php?page=palma-orders&tracking_saved=1'));
+        exit;
+    }
+
     public static function register_settings() {
         register_setting('palma_bridge','palma_allowed_origin',['sanitize_callback'=>'esc_url_raw']);
         register_setting('palma_bridge','palma_payment_gateway_id',['sanitize_callback'=>'sanitize_text_field']);
@@ -344,8 +367,18 @@ final class Palma_Rotan_Commerce_Bridge {
         if (!current_user_can('manage_woocommerce')) return;
         $orders=wc_get_orders(['limit'=>30,'orderby'=>'date','order'=>'DESC']);
         echo '<div class="wrap"><h1>PALMA ROTAN — Orders</h1><p>WooCommerce adalah sumber order utama. Invoice dan Packing List dibuat otomatis setelah pembayaran berhasil.</p>';
-        echo '<table class="widefat striped"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th>Documents</th></tr></thead><tbody>';
-        foreach($orders as $o){if($o->is_paid())self::ensure_documents($o);$key=rawurlencode($o->get_order_key());$inv=$o->is_paid()?esc_url(rest_url(self::REST_NS.'/document/invoice/'.$o->get_id()).'?key='.$key):'';$pack=$o->is_paid()?esc_url(rest_url(self::REST_NS.'/document/packing/'.$o->get_id()).'?key='.$key):'';echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a>':'').'</td></tr>'; }
+        echo '<table class="widefat striped"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th>Courier</th><th>Tracking</th><th>Documents</th></tr></thead><tbody>';
+        foreach($orders as $o){
+            if($o->is_paid())self::ensure_documents($o);
+            $key=rawurlencode($o->get_order_key());
+            $inv=$o->is_paid()?esc_url(rest_url(self::REST_NS.'/document/invoice/'.$o->get_id()).'?key='.$key):'';
+            $pack=$o->is_paid()?esc_url(rest_url(self::REST_NS.'/document/packing/'.$o->get_id()).'?key='.$key):'';
+            $tracking=(string)$o->get_meta('_palma_tracking_number');
+            $carrier=(string)$o->get_meta('_palma_shipping_carrier');
+            $trackUrl=(string)$o->get_meta('_palma_tracking_url');
+            $saveUrl=wp_nonce_url(admin_url('admin-post.php?action=palma_save_tracking&order_id='.$o->get_id()),'palma_save_tracking_'.$o->get_id());
+            echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.esc_html($carrier?:'—').'</td><td><form method="post" action="'.esc_url($saveUrl).'"><input type="text" name="tracking_number" value="'.esc_attr($tracking).'" placeholder="Nomor resi" style="width:150px"><input type="url" name="tracking_url" value="'.esc_attr($trackUrl).'" placeholder="URL tracking" style="width:180px"><button class="button button-small">Save</button></form></td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a>':'').'</td></tr>';
+        }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
         echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
