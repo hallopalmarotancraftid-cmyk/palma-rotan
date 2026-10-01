@@ -636,7 +636,34 @@ async function adminShipping(request,env){
   return json({ok:true,orderId:order.id,orderNumber:order.order_number,status,courier,trackingNumber,trackingUrl:trackingUrlValue,trackingLink:trackingUrl({...order,...pack,courier,tracking_number:trackingNumber,tracking_url:trackingUrlValue},env),shipmentMode:mode,testShipment:shipmentTest},200,cors(request));
 }
 __name(adminShipping,"adminShipping");
+async function ensurePaymentFoundationSchema(env) {
+  const defs = [
+    ["payment_url","TEXT"],["expiry_time","TEXT"],["payment_type","TEXT"],
+    ["fraud_status","TEXT"],["raw_response","TEXT"],["updated_at","TEXT"]
+  ];
+  const pInfo = await env.DB.prepare("PRAGMA table_info(payments)").all();
+  const pCols = new Set((pInfo.results || []).map(x => x.name));
+  for (const [col,type] of defs) {
+    if (pCols.has(col)) continue;
+    try { await env.DB.prepare("ALTER TABLE payments ADD COLUMN " + col + " " + type).run(); }
+    catch (err) { if (!/duplicate column name/i.test(String(err?.message || err))) throw err; }
+  }
+  const wDefs = [["raw_payload","TEXT"],["status","TEXT"],["error_message","TEXT"]];
+  const wInfo = await env.DB.prepare("PRAGMA table_info(payment_webhooks)").all();
+  const wCols = new Set((wInfo.results || []).map(x => x.name));
+  for (const [col,type] of wDefs) {
+    if (wCols.has(col)) continue;
+    try { await env.DB.prepare("ALTER TABLE payment_webhooks ADD COLUMN " + col + " " + type).run(); }
+    catch (err) { if (!/duplicate column name/i.test(String(err?.message || err))) throw err; }
+  }
+  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_provider_transaction ON payments(provider,provider_transaction_id) WHERE provider_transaction_id IS NOT NULL AND provider_transaction_id <> ''").run();
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_payments_order_status ON payments(order_id,status)").run();
+  return true;
+}
+__name(ensurePaymentFoundationSchema,"ensurePaymentFoundationSchema");
+
 async function paymentWebhook(request, env) {
+  await ensurePaymentFoundationSchema(env);
   const serverKey = String(env.MIDTRANS_SERVER_KEY || "").trim();
   if (!serverKey) return json({ error: "MIDTRANS_SERVER_KEY belum dikonfigurasi" }, 503, cors(request));
   const raw = await request.text();
@@ -653,43 +680,53 @@ async function paymentWebhook(request, env) {
   const transactionStatus = String(body.transaction_status || "").toLowerCase();
   const transactionId = String(body.transaction_id || "").trim();
   const eventId = await sha256(`${orderNumber}|${transactionId}|${transactionStatus}|${statusCode}`);
-  if (await env.DB.prepare(`SELECT id FROM payment_webhooks WHERE event_id=?`).bind(eventId).first()) {
-    return json({ ok: true, duplicate: true }, 200, cors(request));
-  }
-
-  const order = await env.DB.prepare(`SELECT * FROM orders WHERE order_number=?`).bind(orderNumber).first();
-  if (!order) return json({ error: "Order tidak ditemukan" }, 404, cors(request));
-
-  const fraudStatus = String(body.fraud_status || "").toLowerCase();
-  const isSuccess = transactionStatus === "settlement" || (transactionStatus === "capture" && fraudStatus === "accept");
-  let result = { ok: true, ignored: false };
-
-  if (isSuccess) {
-    result = await markOrderPaid(order.id, {
-      amount: Math.round(Number(body.gross_amount)), currency: "IDR",
-      provider: "midtrans", method: body.payment_type || "snap",
-      providerTransactionId: transactionId || null
-    }, env, "midtrans_webhook");
-    if (!result.ok) return json({ error: result.error }, result.status || 400, cors(request));
+  const payloadHash = await sha256(raw);
+  const existingEvent = await env.DB.prepare("SELECT id,status FROM payment_webhooks WHERE event_id=?").bind(eventId).first();
+  if (existingEvent?.status === "PROCESSED") return json({ ok: true, duplicate: true }, 200, cors(request));
+  if (!existingEvent) {
+    await env.DB.prepare("INSERT INTO payment_webhooks(id,provider,event_id,payload_hash,raw_payload,status) VALUES(?,?,?,?,?,?)")
+      .bind(id("wh"), "midtrans", eventId, payloadHash, raw.slice(0, 200000), "PROCESSING").run();
   } else {
-    const mapped = { pending: "PENDING", deny: "REJECTED", cancel: "CANCELLED", expire: "EXPIRED", failure: "FAILED" }[transactionStatus];
-    if (mapped && order.payment_status !== "PAID") {
-      await env.DB.batch([
-        env.DB.prepare(`UPDATE orders SET payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(mapped, order.id),
-        env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(id("hist"), order.id, mapped, `Midtrans status: ${transactionStatus}`)
-      ]);
-    }
-    result.ignored = true;
+    await env.DB.prepare("UPDATE payment_webhooks SET status='PROCESSING',raw_payload=?,error_message=NULL WHERE id=?")
+      .bind(raw.slice(0, 200000), existingEvent.id).run();
   }
 
-  await env.DB.prepare(`INSERT INTO payment_webhooks(id,provider,event_id,payload_hash) VALUES(?,?,?,?)`).bind(
-    id("wh"), "midtrans", eventId, await sha256(raw)
-  ).run();
+  try {
+    const order = await env.DB.prepare("SELECT * FROM orders WHERE order_number=?").bind(orderNumber).first();
+    if (!order) throw Object.assign(new Error("Order tidak ditemukan"), { httpStatus: 404 });
 
-  return json({
-    ok: true, orderId: order.id, orderNumber, transactionStatus,
-    invoiceNo: result.invoiceNo || null, packingNo: result.packingNo || null
-  }, 200, cors(request));
+    const fraudStatus = String(body.fraud_status || "").toLowerCase();
+    const isSuccess = transactionStatus === "settlement" || (transactionStatus === "capture" && fraudStatus === "accept");
+
+    if (isSuccess) {
+      const result = await markOrderPaid(order.id, {
+        amount: Math.round(Number(body.gross_amount)),
+        currency: "IDR",
+        provider: "midtrans",
+        method: body.payment_type || "snap",
+        providerTransactionId: transactionId || null
+      }, env, "midtrans_webhook");
+      if (!result.ok) throw Object.assign(new Error(result.error || "Gagal memproses pembayaran"), { httpStatus: result.status || 400 });
+    } else {
+      const mapped = { pending: "PENDING", deny: "FAILED", cancel: "CANCELLED", expire: "EXPIRED", failure: "FAILED" }[transactionStatus];
+      if (mapped && order.payment_status !== "PAID") {
+        await env.DB.batch([
+          env.DB.prepare("UPDATE payments SET status=?,payment_type=?,fraud_status=?,raw_response=?,updated_at=CURRENT_TIMESTAMP WHERE order_id=? AND provider='midtrans' AND status<>'PAID'")
+            .bind(mapped, body.payment_type || "snap", fraudStatus || null, raw.slice(0, 200000), order.id),
+          env.DB.prepare("UPDATE orders SET payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'").bind(mapped, order.id),
+          env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note,status_type,actor) VALUES(?,?,?,?,?,?)")
+            .bind(id("hist"), order.id, mapped, `Midtrans status: ${transactionStatus}`, "PAYMENT", "midtrans_webhook")
+        ]);
+      }
+    }
+
+    await env.DB.prepare("UPDATE payment_webhooks SET status='PROCESSED',error_message=NULL,processed_at=CURRENT_TIMESTAMP WHERE event_id=?").bind(eventId).run();
+    return json({ ok: true, orderId: order.id, orderNumber, transactionStatus }, 200, cors(request));
+  } catch (error) {
+    await env.DB.prepare("UPDATE payment_webhooks SET status='FAILED',error_message=?,processed_at=CURRENT_TIMESTAMP WHERE event_id=?")
+      .bind(String(error?.message || error).slice(0, 1000), eventId).run().catch(() => {});
+    return json({ error: error?.message || "Webhook processing failed" }, error?.httpStatus || 500, cors(request));
+  }
 }
 __name(paymentWebhook, "paymentWebhook");
 function safePdfText(value) {
