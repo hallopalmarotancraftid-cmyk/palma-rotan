@@ -201,7 +201,7 @@ async function ensurePackingAuth(orderId,env){const row=await env.DB.prepare("SE
 __name(ensurePackingAuth,"ensurePackingAuth");
 function escEmail(value){return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 __name(escEmail,"escEmail");
-async function sendOrderDocumentsEmail(order,items,branding,env,idempotencyKey=null){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack}; enriched.tracking_link=trackingUrl(enriched,env); const track=enriched.tracking_link,brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":String(idempotencyKey||("order-documents-"+order.id))},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
+async function sendOrderDocumentsEmail(order,items,branding,env,idempotencyKey=null){const apiKey=String(env.RESEND_API_KEY||"").trim(),to=String(order.email||"").trim();if(!apiKey||!to)return {ok:false,skipped:true,reason:!apiKey?"RESEND_API_KEY belum dikonfigurasi":"email pembeli kosong"};const pack=await ensurePackingAuth(order.id,env);if(!pack)return {ok:false,skipped:true,reason:"packing order belum tersedia"};const enriched={...order,...pack}; enriched.tracking_link=trackingUrl(enriched,env); const track=enriched.tracking_link,brand=String(branding.brand||"PALMA ROTAN"),from=String(env.RESEND_FROM_EMAIL||"").trim();if(!from)return {ok:false,skipped:true,reason:"RESEND_FROM_EMAIL belum dikonfigurasi"};const invoicePdf=await makeProfessionalPdf("invoice",enriched,items,branding),packingPdf=await makeProfessionalPdf("packing",enriched,items,branding);const html="<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#211a15\"><h2>"+escEmail(brand)+"</h2><p>Pesanan <b>"+escEmail(order.order_number)+"</b> telah menerima pembayaran dan dokumen pesanan tersedia.</p><p>Invoice: <b>"+escEmail(order.invoice_number||"-")+"</b><br>Packing List: <b>"+escEmail(order.packing_number||"-")+"</b></p><p><a href=\""+track+"\" style=\"display:inline-block;padding:12px 18px;background:#211a15;color:#fff;text-decoration:none;border-radius:6px\">Lacak Pengiriman</a></p></div>";const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+apiKey,"Idempotency-Key":String(idempotencyKey||("order-documents-"+order.id))},body:JSON.stringify({from,to:[to],subject:brand+" — Dokumen Pesanan "+order.order_number,html,attachments:[{filename:"invoice-"+order.order_number+".pdf",content:bytesToBase64(invoicePdf),content_type:"application/pdf"},{filename:"packing-"+order.order_number+".pdf",content:bytesToBase64(packingPdf),content_type:"application/pdf"}]})});const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,500)}}if(!response.ok)throw new Error(data?.message||data?.error||("Resend HTTP "+response.status));await env.DB.prepare("UPDATE packing_orders SET email_sent_at=CURRENT_TIMESTAMP,email_error=NULL WHERE order_id=?").bind(order.id).run();return {ok:true,id:data?.id||null,trackingUrl:track}}
 __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
@@ -668,7 +668,25 @@ function pdfLogoImage() {
   return {width,height,rgb:deflateSync(rgb),alpha:deflateSync(alpha)};
 }
 
-function makeProfessionalPdf(type, order, items, branding = {}) {
+async function qrPngImage(value) {
+  const data=String(value||"").trim(); if(!data)return null;
+  const url="https://api.qrserver.com/v1/create-qr-code/?size=240x240&ecc=H&margin=2&format=png&data="+encodeURIComponent(data);
+  const response=await fetch(url,{headers:{"accept":"image/png"}});
+  if(!response.ok)throw new Error("QR service HTTP "+response.status);
+  const png=Buffer.from(await response.arrayBuffer());
+  if(png.length<32||png.toString("ascii",1,4)!=="PNG")throw new Error("QR response bukan PNG");
+  const u32=o=>png.readUInt32BE(o),width=u32(16),height=u32(20),depth=png[24],type=png[25];
+  if(depth!==8||(type!==2&&type!==6))throw new Error("QR PNG format tidak didukung");
+  const idats=[];let p=8;
+  while(p+12<=png.length){const len=u32(p),kind=png.toString("ascii",p+4,p+8),ds=p+8,de=ds+len;if(kind==="IDAT")idats.push(png.subarray(ds,de));p=de+4;if(kind==="IEND")break;}
+  const raw=inflateSync(Buffer.concat(idats)),channels=type===6?4:3,stride=width*channels,rgbRow=1+width*3,alphaRow=1+width;
+  const rgb=Buffer.alloc(rgbRow*height),alpha=Buffer.alloc(alphaRow*height);let src=0,prev=Buffer.alloc(stride);
+  const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
+  for(let y=0;y<height;y++){const filter=raw[src++],row=Buffer.alloc(stride);for(let x=0;x<stride;x++){const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];let out=v;if(filter===1)out=(v+left)&255;else if(filter===2)out=(v+up)&255;else if(filter===3)out=(v+Math.floor((left+up)/2))&255;else if(filter===4)out=(v+paeth(left,up,ul))&255;row[x]=out;}let ro=y*rgbRow,ao=y*alphaRow;rgb[ro++]=0;alpha[ao++]=0;for(let x=0;x<width;x++){const j=x*channels;rgb[ro++]=row[j];rgb[ro++]=row[j+1];rgb[ro++]=row[j+2];alpha[ao++]=channels===4?row[j+3]:255;}prev=row;}
+  return {width,height,rgb:deflateSync(rgb),alpha:deflateSync(alpha)};
+}
+
+async function makeProfessionalPdf(type, order, items, branding = {}) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
   const commands = [];
@@ -710,6 +728,11 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     if(cur) out.push(cur); return out.length?out:["-"];
   };
   const logoImage = pdfLogoImage();
+  let qrImage=null;
+  if(type==="invoice"){
+    try{qrImage=await qrPngImage(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
+    catch(error){console.error("INVOICE_QR_ERROR",{orderId:order.id,message:error?.message||String(error)});}
+  }
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
     rect(x,y,w,h,false);
     text(x+9,y+h-14,title,7.0,"F2",muted);
@@ -907,12 +930,12 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     // Invoice has one clean authentication barcode only. Keep it above the
     // footer and below the payment method so it cannot collide with other
     // barcode blocks.
-    const invoiceBarcodeY=126;
-    barcodeSlot(M,invoiceBarcodeY,W-2*M,52,"ORDER AUTHENTICATION BARCODE",
-      order.order_number&&order.auth_code
-        ? String(order.order_number)+"|"+String(order.auth_code)
-        : String(order.order_number||""),String(order.order_number||""));
-    text(M,invoiceBarcodeY-14,"Scan to authenticate this invoice/order",6.8,"F1",muted);
+    if(qrImage){
+      const qrSize=72,qrX=W-M-qrSize,qrY=118;
+      commands.push(`q ${qrSize} 0 0 ${qrSize} ${qrX} ${qrY} cm /QR Do Q`);
+      text(qrX,qrY-12,"ORDER AUTHENTICATION QR",6.5,"F2",muted);
+      text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
+    }
   }
   // Footer.
   line(M,24,W-M,24,0.8,tan);
@@ -929,17 +952,21 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
   addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
   addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  addObj(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> >> /Contents 7 0 R >>");
+  addObj(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R /QR 10 0 R >> >> /Contents 7 0 R >>");
   addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
   addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /SMask 9 0 R /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
   addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.alpha.length} >>\nstream\n`,data:logoImage.alpha,tail:"\nendstream"});
+  if(qrImage){
+    addObj(10,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${qrImage.width} >> /SMask 11 0 R /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
+    addObj(11,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.alpha.length} >>\nstream\n`,data:qrImage.alpha,tail:"\nendstream"});
+  }
   const xref=total;
-  addText("xref\n0 10\n0000000000 65535 f \n");
-  for(let i=1;i<=9;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
-  addText(`trailer\n<< /Size 10 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  addText("xref\n0 12\n0000000000 65535 f \n");
+  for(let i=1;i<=11;i++)addText(String(offsets[i]||0).padStart(10,"0")+" 00000 n \n");
+  addText(`trailer\n<< /Size 12 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
@@ -992,62 +1019,34 @@ async function adminMedia(request, env) {
 }
 __name(adminMedia, "adminMedia");
 async function loadPdfOrderItems(env, order) {
-  const refs = [...new Set([
+  const orderRefs = new Set([
     String(order.id || "").trim(),
     String(order.order_number || "").trim(),
     String(order.order_number || "").trim().replace(/^#/, "")
-  ].filter(Boolean))];
-
-  let raw = [];
-  for (const ref of refs) {
-    const result = (await env.DB.prepare(
-      "SELECT * FROM order_items WHERE TRIM(CAST(order_id AS TEXT))=? ORDER BY rowid"
-    ).bind(ref).all()).results || [];
-    if (result.length) { raw = result; break; }
-  }
-
-  // If legacy data used a different order reference representation, retry the
-  // exact order number case-insensitively through a text comparison.
-  if (!raw.length && order.order_number) {
-    raw = (await env.DB.prepare(
-      "SELECT * FROM order_items WHERE lower(TRIM(CAST(order_id AS TEXT)))=lower(TRIM(?)) ORDER BY rowid"
-    ).bind(String(order.order_number)).all()).results || [];
-  }
-
+  ].filter(Boolean));
+  const rows = (await env.DB.prepare(
+    "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid"
+  ).all()).results || [];
+  const raw = rows.filter(item => orderRefs.has(String(item.order_id || "").trim()));
   if (!raw.length) return [];
-
-  // Enrich from products without making the product join a prerequisite for
-  // rendering the historical order item snapshot.
-  const productIds = [...new Set(raw.map(x => String(x.product_id || "").trim()).filter(Boolean))];
-  const products = new Map();
-  for (const productId of productIds) {
-    const p = await env.DB.prepare(
-      "SELECT id,weight_kg,dimensions_cm,sku,material,hs_code,package_type FROM products WHERE id=? LIMIT 1"
-    ).bind(productId).first();
-    if (p) products.set(productId, p);
-  }
-
-  return raw.map((item, index) => {
-    const p = products.get(String(item.product_id || "").trim()) || {};
-    return {
-      ...item,
-      id: item.id || ("pdf_item_" + index),
-      product_name: item.product_name || item.name || "Product",
-      name: item.name || item.product_name || "Product",
-      quantity: Number(item.quantity ?? item.qty ?? 0),
-      qty: Number(item.qty ?? item.quantity ?? 0),
-      unit_price: Number(item.unit_price ?? item.price ?? 0),
-      price: Number(item.price ?? item.unit_price ?? 0),
-      total_price: Number(item.total_price ?? item.subtotal ?? item.total ?? 0),
-      currency: item.currency || order.original_currency || "USD",
-      weight_kg: Number(item.weight_kg ?? p.weight_kg ?? 0),
-      dimensions_cm: item.dimensions_cm || p.dimensions_cm || "",
-      sku: item.sku || p.sku || "",
-      material: item.material || p.material || "",
-      hs_code: item.hs_code || p.hs_code || "",
-      package_type: item.package_type || p.package_type || ""
-    };
-  });
+  return raw.map((item, index) => ({
+    ...item,
+    id:item.id||("pdf_item_"+index),
+    product_name:item.product_name||item.name||"Product",
+    name:item.name||item.product_name||"Product",
+    quantity:Number(item.quantity??item.qty??0),
+    qty:Number(item.qty??item.quantity??0),
+    unit_price:Number(item.unit_price??item.price??0),
+    price:Number(item.price??item.unit_price??0),
+    total_price:Number(item.total_price??item.subtotal??item.total??0),
+    currency:item.currency||order.original_currency||"USD",
+    weight_kg:Number(item.weight_kg??0),
+    dimensions_cm:item.dimensions_cm||"",
+    sku:item.sku||item.product_sku||"",
+    material:item.material||"",
+    hs_code:item.hs_code||"",
+    package_type:item.package_type||""
+  }));
 }
 __name(loadPdfOrderItems, "loadPdfOrderItems");
 
@@ -1114,7 +1113,7 @@ async function documentPdf(request, env, type, orderId) {
     try { value = JSON.parse(value); } catch (_) {}
     return [row.key, value];
   }));
-  const bytes = type === "label" ? makeShippingLabelPdf(order, branding) : makeProfessionalPdf(type, order, items, branding);
+  const bytes = type === "label" ? makeShippingLabelPdf(order, branding) : await makeProfessionalPdf(type, order, items, branding);
   // PDF delivery is independent of optional R2 storage.
   // R2 persistence must never prevent the production document from opening.
   if (env.MEDIA) {
