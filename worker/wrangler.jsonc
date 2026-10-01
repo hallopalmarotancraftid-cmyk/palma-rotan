@@ -1,4 +1,5 @@
 // Cloudflare Workers staging deployment configuration
+// Deployment trigger only; runtime configuration unchanged.
 {
   "name": "palma-rotan-api-staging",
   "main": "index.js",
