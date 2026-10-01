@@ -733,7 +733,7 @@ async function qrPdfImage(value) {
   return {width,height,rgb:deflateSync(rgb)};
 }
 
-function makeProfessionalPdf(type, order, items) {
+function makeProfessionalPdf(type, order, items, branding = {}) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
   const commands = [];
@@ -774,152 +774,262 @@ function makeProfessionalPdf(type, order, items) {
     for(const word of words){ const next=cur?cur+" "+word:word; if(next.length>max&&cur){out.push(cur);cur=word}else cur=next; }
     if(cur) out.push(cur); return out.length?out:["-"];
   };
-  const palmLogo = (x,y,scale=1) => {
-    commands.push(`${brown} RG ${brown} rg 1.5 w`);
-    commands.push(`${x+10*scale} ${y} m ${x+15*scale} ${y+38*scale} ${x+22*scale} ${y+58*scale} ${x+31*scale} ${y+72*scale} c S`);
-    commands.push(`${x+10*scale} ${y} m ${x+30*scale} ${y-2*scale} ${x+38*scale} ${y+2*scale} ${x+42*scale} ${y+6*scale} c S`);
-    for(const leaf of [[31,72,0],[31,72,45],[31,72,90],[31,72,135],[31,72,180],[31,72,225],[31,72,270]]){
-      const a=leaf[2]*Math.PI/180, ex=31+34*Math.cos(a), ey=72+18*Math.sin(a);
-      commands.push(`${x+31*scale} ${y+72*scale} m ${x+ex*scale} ${y+ey*scale} l S`);
+  const logoImage = pdfLogoImage();
+  let qrMatrix=null;
+  if(type==="invoice"){
+    try{qrMatrix=await qrPngMatrix(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
+    catch(error){console.error("INVOICE_QR_ERROR",{orderId:order.id,message:error?.message||String(error)});}
+  }
+  const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
+    rect(x,y,w,h,false);
+    text(x+9,y+h-14,title,7.0,"F2",muted);
+    const raw=String(value||"").slice(0,180);
+    if(raw){
+      drawCode128(commands,x+10,y+19,w-20,Math.max(25,h-43),raw);
+      const shown=String(displayValue ?? raw).replace(/\s+/g," ").trim().slice(0,34);
+      text(x+9,y+6,shown||"SCANNED DATA",6.2,"F2",brown);
+    } else {
+      text(x+9,y+7,"NOT ASSIGNED",6.2,"F2",muted);
+    }
+  };
+  // Compact carrier mark: only the mark is rendered beside "Courier";
+  // no separate courier name is printed, so it cannot overlap the logo area.
+  const carrierMark = (x,y,carrier) => {
+    const v=String(carrier||"").toUpperCase();
+    if(v.includes("DHL")){
+      commands.push("q 0.98 0.78 0.02 rg", x+" "+y+" 42 15 re f", "Q");
+      text(x+5,y+4,"DHL",9,"F2","0.82 0.03 0.03");
+    } else if(v.includes("J&T") || v.includes("JNT") || v.includes("JET")){
+      commands.push("q 0.82 0.03 0.03 rg", x+" "+y+" 42 15 re f", "Q");
+      text(x+5,y+4,"J&T",9,"F2","1 1 1");
+    } else {
+      text(x+2,y+4,v.slice(0,10)||"-",7.2,"F2",brown);
     }
   };
 
   // Paper background and top brand band.
   commands.push(`q ${cream} rg 0 0 ${W} ${H} re f Q`);
   commands.push(`q 0.985 0.975 0.95 rg 0 ${H-108} ${W} 108 re f Q`);
-  palmLogo(M, 760, 0.62);
-  text(88, 795, "PALMA", 25, "F2");
-  text(88, 770, "ROTAN", 25, "F2");
-  line(205, 772, 205, 808, 0.8, tan);
-  text(220, 797, "NATURAL CRAFT", 8, "F2", muted);
-  text(220, 783, "TIMELESS BEAUTY", 8, "F1", muted);
-  text(410, 800, "palmarotancraft.id", 7, "F1", muted);
-  text(410, 785, "+62 812 3456 7890", 7, "F1", muted);
-  text(410, 770, "Yogyakarta, Indonesia", 7, "F1", muted);
+  const brand = "PALMA ROTAN";
+  const brandLine1 = "PALMA";
+  const brandLine2 = "ROTAN";
+  const tagline1 = String(branding.pdfTagline1 || "NATURAL CRAFT");
+  const tagline2 = String(branding.pdfTagline2 || "TIMELESS BEAUTY");
+  const website = String(branding.website || "palmarotancraft.id");
+  const phone = String(branding.whatsapp || "08978186933");
+  const businessPhone = String(branding.businessPhone || phone);
+  const countryOrigin = String(branding.countryOrigin || "Indonesia");
+  const exporter = String(branding.exporter || brand);
+  const paymentTerms = String(branding.paymentTerms || "");
+  const incoterms = String(branding.incoterms || "");
+  const portLoading = String(branding.portLoading || "");
+  const portDestination = String(branding.portDestination || "");
+  const address = String(branding.address || "Jl. Rotan Jaya, Ds. Teluk Wetan, RT 07/RW 01, Kec. Welahan, Kab. Jepara, Prov. Jawa Tengah, Indonesia");
+  commands.push("q", "160 0 0 55 42 760 cm", "/Logo Do", "Q");
+  text(220, 797, tagline1.slice(0, 24), 8, "F2", muted);
+  text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
+  text(410, 800, website.slice(0, 30), 7, "F1", muted);
+  if (phone) text(410, 785, "Phone / WhatsApp: "+businessPhone.slice(0, 18), 7, "F1", muted);
+  const email = String(branding.email || "hallo.palmarotancraft.id@gmail.com");
+  if (email) text(410, 770, email.slice(0, 30), 7, "F1", muted);
+  if (address) text(220, 758, address.slice(0, 54), 6.5, "F1", muted);
   line(M, 748, W-M, 748, 1.2, brown);
 
   // Document title and metadata.
   text(M, 710, type === "invoice" ? "INVOICE" : "PACKING LIST", 25, "F3");
-  text(M, 690, type === "invoice" ? "Faktur Pembelian" : "Daftar Kemasan Pengiriman", 9, "F1", muted);
+  text(M, 690, type === "invoice" ? "Commercial invoice" : "Shipment packing document", 9, "F1", muted);
   const docNo = type === "invoice" ? (order.invoice_number || "-") : (order.packing_number || "-");
-  text(350, 714, type === "invoice" ? "No. Invoice" : "No. Packing", 8, "F2", muted);
+  text(350, 714, type === "invoice" ? "Invoice No." : "Packing List No.", 8, "F2", muted);
   text(430, 714, docNo, 8, "F1");
-  text(350, 696, "No. Order", 8, "F2", muted);
+  text(350, 696, "Order No.", 8, "F2", muted);
   text(430, 696, order.order_number || "-", 8, "F1");
-  text(350, 678, "Tanggal", 8, "F2", muted);
+  text(350, 678, "Date", 8, "F2", muted);
   text(430, 678, String(order.created_at || "-").replace("T"," ").slice(0,19), 8, "F1");
 
   // Customer / destination cards.
   roundRect(M, 595, 245, 61, false);
   roundRect(308, 595, 245, 61, false);
-  text(54, 638, "KEPADA", 8, "F2", muted);
+  text(54, 638, "BILL TO", 8, "F2", muted);
   text(54, 621, (`${order.first_name || ""} ${order.last_name || ""}`.trim() || "-").slice(0,36), 10, "F2");
   text(54, 606, "Email: " + (order.email || "-"), 7.5, "F1", muted);
-  text(320, 638, "PENGIRIMAN", 8, "F2", muted);
-  const addr = order.shipping_address_json || "-";
-  text(320, 621, "Alamat: " + wrap(addr, 31)[0], 8, "F1");
-  if(wrap(addr,31)[1]) text(320,606,wrap(addr,31)[1],7.5,"F1",muted);
+  text(320, 638, "SHIPMENT", 8, "F2", muted);
+  let addressText = "-";
+  try {
+    const parsedAddress = JSON.parse(order.shipping_address_json || "{}");
+    addressText = [parsedAddress.address,parsedAddress.city,parsedAddress.state,parsedAddress.postalCode,parsedAddress.country].filter(Boolean).join(", ") || "-";
+  } catch (_) {
+    addressText = String(order.shipping_address_json || "-");
+  }
+  const addressLines = wrap(addressText,31);
+  text(320,621,"Address: "+addressLines[0],8,"F1");
+  if(addressLines[1]) text(320,606,addressLines[1],7.5,"F1",muted);
 
+  if(type === "packing"){
+    roundRect(M, 510, 245, 66, false);
+    roundRect(308, 510, 245, 66, false);
+    text(54, 560, "SHIPPING INFORMATION", 8.0, "F2", muted);
+    text(54, 544, "Courier", 7.6, "F1", muted);
+    carrierMark(112, 539, order.courier || order.shipping_method || "");
+    text(54, 530, "Tracking No.", 7.6, "F1", muted);
+    text(112, 530, String(order.tracking_number||"-").slice(0,23), 7.0, "F1");
+    text(54, 516, "Total Net Weight", 7.6, "F1", muted);
+    text(112, 516, Number(order.net_weight_kg||0).toFixed(2)+" kg", 7.0, "F1");
+
+    text(320, 560, "PACKAGE SUMMARY", 8.0, "F2", muted);
+    text(320, 544, "Packages", 7.6, "F1", muted);
+    text(390, 544, String(order.package_count||1), 7.0, "F1");
+    text(320, 530, "Package Type", 7.6, "F1", muted);
+    text(390, 530, String(order.packaging_type||"-").slice(0,22), 7.0, "F1");
+    text(320, 516, "Status", 7.6, "F1", muted);
+    text(390, 516, String(order.packing_status||"PENDING").replace(/_/g," ").slice(0,20), 7.0, "F1");
+  }
   if(type === "invoice"){
     roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
-    text(55, 559, "PEMBAYARAN: " + String(order.payment_status || "PENDING"), 8, "F2", brown);
+    text(55, 559, "PAYMENT: " + String(order.payment_status || "PENDING"), 8, "F2", brown);
     roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
-    text(182, 559, "MATA UANG: " + String(order.original_currency || "USD"), 8, "F2", brown);
-  } else {
-    roundRect(M, 550, 118, 27, true, "0.94 0.90 0.84");
-    text(55, 559, "PAKET: 1", 8, "F2", brown);
-    roundRect(174, 550, 113, 27, true, "0.94 0.90 0.84");
-    text(182, 559, "STATUS: PENDING", 8, "F2", brown);
+    text(182, 559, "CURRENCY: " + String(order.original_currency || "USD"), 8, "F2", brown);
+  }
+
+  if(type==="invoice"){
+    const metaY=535;
+    text(M,metaY,"EXPORTER: "+exporter.slice(0,38),7.2,"F1",muted);
+    text(M,metaY-13,"COUNTRY OF ORIGIN: "+countryOrigin.slice(0,29),7.2,"F1",muted);
+    if(paymentTerms) text(310,metaY,"PAYMENT TERMS: "+paymentTerms.slice(0,30),7.2,"F1",muted);
+    if(incoterms) text(310,metaY-13,"INCOTERMS: "+incoterms.slice(0,30),7.2,"F1",muted);
+    if(portLoading) text(M,metaY-26,"PORT OF LOADING: "+portLoading.slice(0,30),7.2,"F1",muted);
+    if(portDestination) text(310,metaY-26,"PORT OF DESTINATION: "+portDestination.slice(0,30),7.2,"F1",muted);
   }
 
   // Table.
-  let y=520;
+  let y=490;
   const cols = type === "invoice"
     ? [M,70,350,415,490,W-M]
     : [M,70,350,405,465,525,W-M];
   rect(M,y-24,W-2*M,24,true,"0.90 0.85 0.77");
   if(type === "invoice"){
     text(49,y-16,"NO",7.5,"F2");
-    text(82,y-16,"PRODUK",7.5,"F2");
+    text(82,y-16,"PRODUCT / DESCRIPTION",7.5,"F2");
     text(365,y-16,"QTY",7.5,"F2");
-    text(423,y-16,"HARGA",7.5,"F2");
-    text(497,y-16,"JUMLAH",7.5,"F2");
+    text(423,y-16,"UNIT PRICE",7.5,"F2");
+    text(497,y-16,"AMOUNT",7.5,"F2");
   } else {
     text(49,y-16,"NO",7.5,"F2");
-    text(82,y-16,"PRODUK",7.5,"F2");
+    text(82,y-16,"PRODUCT / DESCRIPTION",7.5,"F2");
     text(363,y-16,"QTY",7.5,"F2");
-    text(417,y-16,"BERAT",7.5,"F2");
-    text(477,y-16,"DIMENSI",7.5,"F2");
-    text(535,y-16,"KET.",7.5,"F2");
+    text(417,y-16,"NET WT.",7.5,"F2");
+    text(477,y-16,"DIMENSIONS",7.5,"F2");
+    text(535,y-16,"MATERIAL",7.5,"F2");
   }
   y-=24;
-  items.forEach((item,index)=>{
-    const name=wrap(item.product_name || "Product", type==="invoice"?35:30);
-    const rowH=Math.max(38,name.length*10+14);
-    line(M,y-rowH,W-M,y-rowH,0.45,tan);
-    text(50,y-18,String(index+1),8,"F1");
-    let yy=y-13;
-    for(const n of name.slice(0,3)){ text(82,yy,n,8,"F1"); yy-=10; }
-    text(type==="invoice"?365:363,y-18,String(item.quantity || 0),8,"F1");
-    if(type==="invoice"){
-      text(423,y-18,money(item.unit_price,item.currency),7.2,"F1");
-      text(497,y-18,money(item.total_price,item.currency),7.2,"F1");
-    } else {
-      text(417,y-18,Number(item.weight_kg||0).toFixed(1)+" kg",7.2,"F1");
-      text(477,y-18, item.dimensions_cm || "-",6.8,"F1");
-      text(535,y-18,"Rattan",6.8,"F1");
-    }
-    y-=rowH;
-  });
+  if(!items.length){
+    line(M,y-38,W-M,y-38,0.45,tan);
+    text(50,y-18,"—",8,"F1",muted);
+    text(82,y-18,"Product data not available for this order",8,"F1",muted);
+    y-=38;
+  } else {
+    items.forEach((item,index)=>{
+      const name=wrap(item.product_name || item.name || "Product", type==="invoice"?35:30);
+      const rowH=Math.max(42,name.length*10+16);
+      line(M,y-rowH,W-M,y-rowH,0.45,tan);
+      text(50,y-18,String(index+1),8,"F1");
+      let yy=y-13;
+      for(const n of name.slice(0,3)){ text(82,yy,n,8,"F1"); yy-=10; }
+      if(type==="packing" && item.sku) { text(82,yy,"SKU: "+item.sku,6.8,"F1",muted); yy-=9; if(item.hs_code) { text(82,yy,"HS: "+item.hs_code,6.8,"F1",muted); yy-=9; } }
+      text(type==="invoice"?365:363,y-18,String(item.quantity ?? item.qty ?? 0),8,"F1");
+      if(type==="invoice"){
+        text(423,y-18,money(item.unit_price ?? item.price,item.currency),7.2,"F1");
+        text(497,y-18,money(item.total_price,item.currency),7.2,"F1");
+      } else {
+        text(417,y-18,Number(item.weight_kg||0).toFixed(1)+" kg",7.2,"F1");
+        text(477,y-18, item.dimensions_cm || "-",6.8,"F1");
+        text(535,y-18,item.material || "Rattan",6.2,"F1");
+      }
+      y-=rowH;
+    });
+  }
 
   if(type==="invoice"){
     const subtotal=Number(order.original_amount)||0, shipping=Number(order.shipping_amount)||0, total=Number(order.total_amount)||0, cur=order.original_currency||"USD";
     const sx=350; y=Math.max(y-8,245);
     text(sx,y,"Subtotal",8.5,"F1",muted); text(490,y,money(subtotal,cur),8.5,"F1");
-    text(sx,y-18,"Pengiriman",8.5,"F1",muted); text(490,y-18,money(shipping,cur),8.5,"F1");
+    text(sx,y-18,"Shipping",8.5,"F1",muted); text(490,y-18,money(shipping,cur),8.5,"F1");
     line(sx,y-28,W-M,y-28,0.8,tan);
     roundRect(sx,y-62,W-M-sx,30,true,"0.86 0.78 0.66");
-    text(sx+10,y-51,"TOTAL PEMBAYARAN",9,"F2");
+    text(sx+10,y-51,"TOTAL",9,"F2");
     text(482,y-51,money(total,cur),9,"F2");
-    text(M,205,"Metode Pembayaran",8,"F2",muted);
+    text(M,205,"Payment Method",8,"F2",muted);
     text(M,189,"Midtrans / Payment Gateway",8.5,"F1");
-  } else {
-    const dy=Math.max(y-8,235);
-    text(M,dy,"INFORMASI PENGIRIMAN",8,"F2",muted);
-    text(M,dy-17,"Kurir: " + (order.shipping_method || "-"),8,"F1");
-    text(M,dy-32,"No. Resi: -",8,"F1");
-    text(310,dy,"RINGKASAN KEMASAN",8,"F2",muted);
-    text(310,dy-17,"Jumlah Paket: 1",8,"F1");
-    text(310,dy-32,"Status: Packing pending",8,"F1");
+
+  }
+
+  // Packing List: barcode row is placed directly above the weight/shipping
+  // summary, with three proportional columns.
+  if(type==="packing"){
+    const barcodeY=Math.max(y-82,92);
+    const bw=(W-2*M-20)/3;
+    barcodeSlot(M,barcodeY,bw,72,"TRACKING BARCODE",String(order.tracking_link||""),String(order.tracking_number||"TRACKING LINK"));
+    barcodeSlot(M+bw+10,barcodeY,bw,72,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
+    barcodeSlot(M+(bw+10)*2,barcodeY,bw,72,"ORDER AUTHENTICATION BARCODE",
+      order.order_number&&order.auth_code
+        ? String(order.order_number)+"|"+String(order.auth_code)
+        : String(order.order_number||""),String(order.order_number||""));
+  } else if(type==="invoice"){
+    // Invoice has one clean authentication barcode only. Keep it above the
+    // footer and below the payment method so it cannot collide with other
+    // barcode blocks.
+    if(qrMatrix){
+      const qrSize=72,qrX=W-M-qrSize,qrY=118,unit=qrSize/qrMatrix.width;
+      commands.push("q 1 1 1 rg",`${qrX} ${qrY} ${qrSize} ${qrSize} re f`,"Q");
+      commands.push("q 0 0 0 rg");
+      for(let row=0;row<qrMatrix.rows.length;row++){
+        const py=qrY+qrSize-(row+1)*unit;
+        for(const [start,len] of qrMatrix.rows[row]){
+          commands.push(`${qrX+start*unit} ${py} ${len*unit+0.02} ${unit+0.02} re f`);
+        }
+      }
+      commands.push("Q");
+      text(qrX,qrY-12,"ORDER AUTHENTICATION QR",6.5,"F2",muted);
+      text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
+    }
+  }
+  if(type==="packing"){
+    const cy=Math.max(y-88,132);
+    text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
+    const checks=["Product quantity checked","Weight / dimensions checked","Tracking / label checked","Documents enclosed"];
+    checks.forEach((label,i)=>{
+      const yy=cy-16-i*12;
+      commands.push(tan+" RG", "0.8 w", M+" "+yy+" 8 8 re S");
+      text(M+14,yy+1,label,6.8,"F1",muted);
+    });
   }
 
   // Footer.
-  line(M,92,W-M,92,0.8,tan);
-  palmLogo(M, 52, 0.25);
-  text(68,67,"Kerajinan Tangan",7,"F2",muted);
-  text(68,56,"Bahan Alami • Ramah Lingkungan",6.5,"F1",muted);
-  text(390,67,"PALMA ROTAN",8,"F2");
-  text(390,54,"Natural Craft • Timeless Beauty",6.5,"F1",muted);
+  line(M,24,W-M,24,0.8,tan);
+  commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
+  text(86,24,"Handcrafted Rattan • Natural Materials • Crafted in Indonesia",6.2,"F1",muted);
+  text(390,24,"PALMA ROTAN",7,"F2");
 
   const stream=commands.join("\n")+"\n";
-  const objects=[
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>",
-    `<< /Length ${new TextEncoder().encode(stream).length} >>
-stream
-${stream}endstream`
-  ];
-  let pdf="%PDF-1.4\n"; const offsets=[0];
-  for(let i=0;i<objects.length;i++){offsets.push(new TextEncoder().encode(pdf).length);pdf+=`${i+1} 0 obj\n${objects[i]}\nendobj\n`;}
-  const xref=new TextEncoder().encode(pdf).length;
-  pdf+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;
-  for(let i=1;i<offsets.length;i++) pdf+=String(offsets[i]).padStart(10,"0")+" 00000 n \n";
-  pdf+=`trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return new TextEncoder().encode(pdf);
+  const te=new TextEncoder();
+  const chunks=[]; let total=0; const offsets=[0];
+  const add=(b)=>{chunks.push(b);total+=b.length;};
+  const addText=(t)=>add(te.encode(t));
+  addText("%PDF-1.4\n");
+  const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
+  addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
+  addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> /Contents 7 0 R >>`);
+  addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
+  addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
+  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /SMask 9 0 R /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
+  addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.alpha.length} >>\nstream\n`,data:logoImage.alpha,tail:"\nendstream"});
+  const xref=total;
+  addText("xref\n0 10\n0000000000 65535 f \n");
+  for(let i=1;i<=9;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
+  addText(`trailer\n<< /Size 10 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
 async function publicMedia(request, env, key) {
