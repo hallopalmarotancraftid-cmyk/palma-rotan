@@ -665,7 +665,21 @@ function pdfLogoImage() {
     for(let x=0;x<width;x++){const i=x*4;rgb[ro++]=row[i];rgb[ro++]=row[i+1];rgb[ro++]=row[i+2];alpha[ao++]=row[i+3];}
     prev=row;
   }
-  // Flatten alpha into white so the PDF does not depend on an SMask image.\n  for(let y=0;y<height;y++){\n    const rr=y*rgbRowSize, aa=y*alphaRowSize;\n    for(let x=0;x<width;x++){\n      const a=alpha[aa+1+x];\n      const i=rr+1+x*3;\n      if(a<255){\n        rgb[i]=Math.round((rgb[i]*a+255*(255-a))/255);\n        rgb[i+1]=Math.round((rgb[i+1]*a+255*(255-a))/255);\n        rgb[i+2]=Math.round((rgb[i+2]*a+255*(255-a))/255);\n      }\n    }\n  }\n  return {width,height,rgb:deflateSync(rgb)};\n}
+  // Flatten alpha into white so the PDF does not depend on an SMask image.
+  for(let y=0;y<height;y++){
+    const rr=y*rgbRowSize, aa=y*alphaRowSize;
+    for(let x=0;x<width;x++){
+      const a=alpha[aa+1+x];
+      const i=rr+1+x*3;
+      if(a<255){
+        rgb[i]=Math.round((rgb[i]*a+255*(255-a))/255);
+        rgb[i+1]=Math.round((rgb[i+1]*a+255*(255-a))/255);
+        rgb[i+2]=Math.round((rgb[i+2]*a+255*(255-a))/255);
+      }
+    }
+  }
+  return {width,height,rgb:deflateSync(rgb)};
+}
 
 async function qrPdfImage(value) {
   const data=String(value||"").trim();
