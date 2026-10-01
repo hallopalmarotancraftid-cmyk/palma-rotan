@@ -107,6 +107,7 @@ final class Palma_Rotan_Commerce_Bridge {
             $currency = strtoupper(sanitize_text_field($body['currency'] ?? 'USD')) === 'IDR' ? 'IDR' : 'USD';
             $order->set_currency('IDR');
 
+            $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
             foreach ($items as $row) {
                 $lookup = sanitize_text_field($row['sku'] ?? $row['productId'] ?? '');
                 $product = wc_get_product($lookup);
@@ -129,7 +130,6 @@ final class Palma_Rotan_Commerce_Bridge {
                 $order->add_item($line);
             }
 
-            $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
             $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
             $usd = $base[$country] ?? 55;
             if (strtolower($shipping_method) === 'express') $usd *= 1.7;
@@ -166,7 +166,8 @@ final class Palma_Rotan_Commerce_Bridge {
                 'status'=>$order->get_status(),
                 'currency'=>$currency,
                 'paymentCurrency'=>'IDR',
-                'subtotal'=>(float) $order->get_subtotal(),
+                'subtotal'=>(float) ($currency === 'USD' ? $order->get_subtotal() / $rate : $order->get_subtotal()),
+                'subtotalIdr'=>(float) $order->get_subtotal(),
                 'shippingAmount'=>(float) ($currency === 'USD' ? $order->get_shipping_total() / $rate : $order->get_shipping_total()),
                 'shippingAmountIdr'=>(float) $order->get_shipping_total(),
                 'total'=>(float) ($currency === 'USD' ? $order->get_total() / $rate : $order->get_total()),
