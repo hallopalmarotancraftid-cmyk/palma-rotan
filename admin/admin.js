@@ -55,10 +55,15 @@ async function openProductionDocument(type,id){
   if(!token){alert('Sesi admin sudah berakhir. Silakan login kembali.');return}
   try{
     const access=await apiFetch('/api/admin/documents/access',{method:'POST',body:JSON.stringify({type,ref})});
-    if(!access?.path||!access?.access_token)throw new Error('Tautan dokumen production tidak lengkap');
-    const base=String(window.PALMA_API_BASE||'').replace(/\/+$/,'');
-    if(!base)throw new Error('PALMA_API_BASE belum dikonfigurasi');
-    const documentUrl=base+access.path+'?access_token='+encodeURIComponent(access.access_token);
+    let documentUrl=String(access?.url||'').trim();
+    if(!documentUrl){
+      const base=String(window.PALMA_API_BASE||'').replace(/\/+$/,'');
+      if(!base)throw new Error('PALMA_API_BASE belum dikonfigurasi');
+      if(!access?.path||!access?.access_token){
+        throw new Error('Tautan dokumen production tidak lengkap. Field API: '+Object.keys(access||{}).join(', '));
+      }
+      documentUrl=base+access.path+'?access_token='+encodeURIComponent(access.access_token);
+    }
     showProductionPdfUrl(documentUrl,(type==='invoice'?'invoice-':type==='packing'?'packing-':'label-')+String(o?.orderNumber||id)+'.pdf');
   }catch(e){
     alert('Gagal membuka dokumen production: '+(e.message||e));
