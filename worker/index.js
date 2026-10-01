@@ -421,19 +421,30 @@ async function createOrder(request, env) {
     return json({ error: "Data item pesanan gagal disimpan dengan lengkap", orderId, orderNumber }, 500, cors(request));
   }
 
+  await ensurePaymentFoundationSchema(env);
   const requestedGateway = String(body.paymentGateway || body.paymentMethod || "").toLowerCase();
   const useMidtrans = ["gateway", "midtrans", "snap", "payment gateway"].includes(requestedGateway);
+  const paymentId = id("pay");
+  await env.DB.prepare(`INSERT INTO payments(id,order_id,provider,method,amount,currency,status,payment_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`)
+    .bind(paymentId, orderId, useMidtrans ? "midtrans" : "manual", useMidtrans ? "snap" : (body.paymentMethod || "bank_transfer"), useMidtrans ? adminTotalIdr : total, useMidtrans ? "IDR" : currency, "PENDING", null).run();
+  await env.DB.prepare(`UPDATE orders SET payment_status='PENDING',order_status='WAITING_PAYMENT',updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(orderId).run();
+  await env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note,status_type,actor) VALUES(?,?,?,?,?,?)`)
+    .bind(id("hist"), orderId, "WAITING_PAYMENT", "Order menunggu pembayaran", "ORDER", "system").run();
+
   if (useMidtrans) {
     try {
       const snap = await createMidtransSnap({ order_number: orderNumber, admin_total_idr: adminTotalIdr }, body.customer || {}, env);
-      await env.DB.prepare(`UPDATE orders SET payment_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(snap.redirect_url, orderId).run();
-      return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr, paymentUrl: snap.redirect_url, paymentToken: snap.token }, 201, cors(request));
+      await env.DB.batch([
+        env.DB.prepare(`UPDATE orders SET payment_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(snap.redirect_url, orderId),
+        env.DB.prepare(`UPDATE payments SET payment_url=?,payment_type='snap',updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(snap.redirect_url, paymentId)
+      ]);
+      return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr, paymentUrl: snap.redirect_url, paymentToken: snap.token, paymentStatus: "PENDING" }, 201, cors(request));
     } catch (error) {
       console.error("MIDTRANS_CREATE_ERROR", { code: error?.code || "UNKNOWN", message: error?.message || String(error), providerStatus: error?.providerStatus || null, providerBody: error?.providerBody || null, orderId, orderNumber });
       return json({ error: error?.message || "Gagal membuat halaman pembayaran Midtrans", orderId, orderNumber, paymentStatus: "PENDING" }, 502, cors(request));
     }
   }
-  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(request));
+  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr, paymentStatus: "PENDING" }, 201, cors(request));
 }
 __name(createOrder, "createOrder");
 async function adminOrders(request, env) {
