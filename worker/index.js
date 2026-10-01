@@ -716,8 +716,7 @@ function pdfLogoImage() {
       rgb[rowBase+3+x*3]=Math.round((rgb[rowBase+3+x*3]*a+bgB*inv)/255);
     }
   }
-  return {width,height,rgb:deflateSync(rgb)};
-}
+  // Store plain RGB scanlines (no PNG predictor bytes). This keeps the PDF image stream compatible with browser PDF viewers.\n  const rawRgb=Buffer.alloc(width*height*3);\n  for(let y=0;y<height;y++){\n    rawRgb.set(rgb.subarray(y*rgbRowSize+1,(y+1)*rgbRowSize),y*width*3);\n  }\n  return {width,height,rgb:deflateSync(rawRgb)};\n}
 
 async function qrPngMatrix(value) {
   const data=String(value||"").trim();
@@ -1064,7 +1063,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
-  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
+  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
   const xref=total;
   addText("xref\n0 9\n0000000000 65535 f \n");
   for(let i=1;i<=8;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
