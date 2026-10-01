@@ -716,7 +716,12 @@ function pdfLogoImage() {
       rgb[rowBase+3+x*3]=Math.round((rgb[rowBase+3+x*3]*a+bgB*inv)/255);
     }
   }
-  // Store plain RGB scanlines (no PNG predictor bytes). This keeps the PDF image stream compatible with browser PDF viewers.\n  const rawRgb=Buffer.alloc(width*height*3);\n  for(let y=0;y<height;y++){\n    rawRgb.set(rgb.subarray(y*rgbRowSize+1,(y+1)*rgbRowSize),y*width*3);\n  }\n  return {width,height,rgb:deflateSync(rawRgb)};\n}
+  // Store plain RGB scanlines (no PNG predictor bytes). This keeps the PDF image stream compatible with browser PDF viewers.
+  const rawRgb=Buffer.alloc(width*height*3);
+  for(let y=0;y<height;y++){
+    rawRgb.set(rgb.subarray(y*rgbRowSize+1,(y+1)*rgbRowSize),y*width*3);
+  }
+  return {width,height,rgb:deflateSync(rawRgb)};\n}
 
 async function qrPngMatrix(value) {
   const data=String(value||"").trim();
