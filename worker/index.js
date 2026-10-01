@@ -268,6 +268,8 @@ async function createOrder(request, env) {
     subtotal += lineTotal;
     items.push({ p, qty, total: lineTotal });
   }
+  const setting = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key='usdToIdrRate'`).first();
+  const rate = parseSettingNumber(setting?.value_json, 16000);
   const country=String(body.shippingAddress?.country||body.customer?.country||"").trim();
   const shippingCarrier=shippingCarrierForCountry(country);
   const requestedShippingMethod=String(body.shippingMethod||"Standard").trim();
@@ -285,8 +287,6 @@ async function createOrder(request, env) {
     customerId = id("cus");
     isNewCustomer = true;
   }
-  const setting = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key='usdToIdrRate'`).first();
-  const rate = parseSettingNumber(setting?.value_json, 16000);
   const total = subtotal + shipping;
   const adminTotalIdr = Math.round(currency === "USD" ? total * rate : total);
   if (!Number.isFinite(adminTotalIdr) || adminTotalIdr <= 0) return json({ error: "Total order tidak valid" }, 500, cors(request));
