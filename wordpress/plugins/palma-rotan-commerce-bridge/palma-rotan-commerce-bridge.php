@@ -115,18 +115,24 @@ final class Palma_Rotan_Commerce_Bridge {
                 $order->add_product($product, $qty);
             }
 
-            $shipping_method = sanitize_text_field($body['shippingMethod'] ?? '');
-            if ($shipping_method) {
-                $item = new WC_Order_Item_Shipping();
-                $item->set_method_title($shipping_method);
-                $item->set_method_id('palma_'.$shipping_method);
-                $item->set_total(0);
-                $order->add_item($item);
-            }
+            $shipping_method = sanitize_text_field($body['shippingMethod'] ?? 'Standard');
+            $country = strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? ''));
+            $currency = strtoupper(sanitize_text_field($body['currency'] ?? 'USD')) === 'IDR' ? 'IDR' : 'USD';
+            $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
+            $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
+            $usd = $base[$country] ?? 55;
+            if (strtolower($shipping_method) === 'express') $usd *= 1.7;
+            $shipping_total = $currency === 'IDR' ? round($usd * $rate) : round($usd, 2);
+            $item = new WC_Order_Item_Shipping();
+            $item->set_method_title($shipping_method . ' · ' . ($country === 'ID' ? 'J&T' : 'DHL'));
+            $item->set_method_id('palma_' . sanitize_key($shipping_method));
+            $item->set_total($shipping_total);
+            $order->add_item($item);
 
-            $order->update_meta_data('_palma_currency', sanitize_text_field($body['currency'] ?? 'USD'));
+            $order->update_meta_data('_palma_currency', $currency);
+            $order->update_meta_data('_palma_shipping_carrier', $country === 'ID' ? 'J&T' : 'DHL');
             $order->update_meta_data('_palma_shipping_method', $shipping_method);
-            $order->update_meta_data('_palma_admin_total_idr', (string) ($body['adminTotalIdr'] ?? ''));
+            $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total() * ($currency === 'USD' ? $rate : 1)));
             $order->calculate_totals();
             $order->save();
 
@@ -252,6 +258,7 @@ final class Palma_Rotan_Commerce_Bridge {
     public static function register_settings() {
         register_setting('palma_bridge','palma_allowed_origin',['sanitize_callback'=>'esc_url_raw']);
         register_setting('palma_bridge','palma_payment_gateway_id',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_usd_idr_rate',['sanitize_callback'=>'floatval']);
     }
 
     public static function admin_page() {
@@ -262,7 +269,7 @@ final class Palma_Rotan_Commerce_Bridge {
         foreach($orders as $o){self::ensure_documents($o);$inv=esc_url(get_post_meta($o->get_id(),'_palma_invoice_url',true));$pack=esc_url(get_post_meta($o->get_id(),'_palma_packing_url',true));echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a>':'').'</td></tr>'; }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
-        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr></table>';
+        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
         submit_button('Save Settings'); echo '</form></div>';
     }
 
