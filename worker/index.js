@@ -966,9 +966,10 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     addObj(10,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
   }
   const xref=total;
-  addText("xref\n0 10\n0000000000 65535 f \n");
-  for(let i=1;i<=9;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
-  addText(`trailer\n<< /Size 10 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const objectCount=qrImage?10:9;
+  addText(`xref\n0 ${objectCount+1}\n0000000000 65535 f \n`);
+  for(let i=1;i<=objectCount;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
+  addText(`trailer\n<< /Size ${objectCount+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
