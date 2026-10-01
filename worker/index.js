@@ -649,8 +649,8 @@ function pdfLogoImage() {
     if (type === "IEND") break;
   }
   const raw = inflateSync(Buffer.concat(idats));
-  const stride = width * 4, rgbRowSize = 1 + width * 3, alphaRowSize = 1 + width;
-  const rgb = Buffer.alloc(rgbRowSize * height), alpha = Buffer.alloc(alphaRowSize * height);
+  const stride = width * 4;
+  const rgb = Buffer.alloc(width * height * 3), alpha = Buffer.alloc(height * (width + 1));
   let src = 0, prev = Buffer.alloc(stride);
   const paeth = (a,b,c) => { const q=a+b-c, pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-c); return pa<=pb&&pa<=pc?a:pb<=pc?b:c; };
   for(let y=0;y<height;y++){
@@ -661,13 +661,13 @@ function pdfLogoImage() {
       if(filter===1)out=(v+left)&255; else if(filter===2)out=(v+up)&255; else if(filter===3)out=(v+Math.floor((left+up)/2))&255; else if(filter===4)out=(v+paeth(left,up,upLeft))&255; else if(filter!==0)throw new Error("Unsupported PNG filter");
       row[x]=out;
     }
-    let ro=y*rgbRowSize, ao=y*alphaRowSize; rgb[ro++]=0; alpha[ao++]=0;
+    let ro=y*width*3, ao=y*(width+1); alpha[ao++]=0;
     for(let x=0;x<width;x++){const i=x*4;rgb[ro++]=row[i];rgb[ro++]=row[i+1];rgb[ro++]=row[i+2];alpha[ao++]=row[i+3];}
     prev=row;
   }
   // Flatten alpha into white so the PDF does not depend on an SMask image.
   for(let y=0;y<height;y++){
-    const rr=y*rgbRowSize, aa=y*alphaRowSize;
+    const rr=y*width*3, aa=y*(width+1);
     for(let x=0;x<width;x++){
       const a=alpha[aa+1+x];
       const i=rr+1+x*3;
@@ -703,7 +703,7 @@ async function qrPdfImage(value) {
     if(kind==="IEND")break;
   }
   const raw=inflateSync(Buffer.concat(idats));
-  const stride=width*channels,rowSize=1+width*3,rgb=Buffer.alloc(rowSize*height);
+  const stride=width*channels,rgb=Buffer.alloc(width*height*3);
   let src=0,prev=Buffer.alloc(stride);
   const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
   for(let y=0;y<height;y++){
@@ -718,7 +718,7 @@ async function qrPdfImage(value) {
       else if(filter!==0)throw new Error("Unsupported QR PNG filter");
       row[x]=out;
     }
-    let ro=y*rowSize;rgb[ro++]=0;
+    let ro=y*width*3;
     for(let x=0;x<width;x++){
       const i=x*channels;
       if(colorType===0||colorType===4){
@@ -1004,9 +1004,9 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
-  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
+  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
   if(qrImage){
-    addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
+    addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
   }
   const xref=total;
   const objectCount=qrImage?9:8;
