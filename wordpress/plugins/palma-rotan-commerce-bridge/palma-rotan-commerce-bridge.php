@@ -151,13 +151,19 @@ final class Palma_Rotan_Commerce_Bridge {
             $payment_url = '';
             $payment_token = '';
             $gateways = WC()->payment_gateways()->payment_gateways();
-            if (isset($gateways[$gateway_id]) && $gateways[$gateway_id]->is_available()) {
-                $result = $gateways[$gateway_id]->process_payment($order->get_id());
-                if (is_array($result)) {
-                    $payment_url = esc_url_raw($result['redirect'] ?? '');
-                }
+            if (!isset($gateways[$gateway_id])) {
+                throw new Exception('Payment gateway WooCommerce tidak ditemukan: '.$gateway_id);
             }
-            if (!$payment_url) $payment_url = $order->get_checkout_payment_url();
+            if (!$gateways[$gateway_id]->is_available()) {
+                throw new Exception('Payment gateway WooCommerce tidak tersedia: '.$gateway_id);
+            }
+            $result = $gateways[$gateway_id]->process_payment($order->get_id());
+            if (!is_array($result) || empty($result['result']) || $result['result'] !== 'success') {
+                $message = is_array($result) ? sanitize_text_field($result['messages'] ?? '') : '';
+                throw new Exception($message ?: 'Payment gateway gagal membuat pembayaran.');
+            }
+            $payment_url = esc_url_raw($result['redirect'] ?? '');
+            if (!$payment_url) throw new Exception('Payment gateway tidak mengembalikan payment URL.');
 
             return self::cors(new WP_REST_Response([
                 'ok'=>true,
