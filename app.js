@@ -207,17 +207,19 @@ async function createOrder(fd){
   const currency=data.settings.currency||'USD';
   for(const x of c){const p=data.products.find(p=>p.id===x.id);if(!p||x.qty<(isCustom(p)?Math.max(1,p.moq||1):1)||x.qty>p.stock){toast('Stock or MOQ changed. Please review cart.');openCart();return}}
   const shipping=shippingFee(fd.get('country'),fd.get('method'),currency);
-  const api=(PALMA_API_BASE||'').replace(/\/$/,'');
+  const api=(window.PALMA_COMMERCE_BASE||PALMA_API_BASE||'').replace(/\/$/,'');
+  const commerceMode=!!(window.PALMA_COMMERCE_BASE||'').trim();
   if(api){
     try{
       const payload={
         currency,
-        items:c.map(x=>({productId:x.id,quantity:x.qty})),
+        items:c.map(x=>{const p=data.products.find(p=>p.id===x.id);return {productId:x.id,sku:p?.sku||p?.sku_code||x.id,quantity:x.qty}}),
         shippingMethod:fd.get('method'),
         shippingAddress:{country:fd.get('country'),province:fd.get('province'),city:fd.get('city'),district:fd.get('district'),postalCode:fd.get('postalCode'),address:fd.get('address')},
         customer:{firstName:fd.get('name'),lastName:'',email:fd.get('email'),phone:fd.get('wa'),country:fd.get('country')},paymentMethod:fd.get('payment')||'gateway',paymentGateway:fd.get('payment')||'gateway'
       };
-      const r=await fetch(api+'/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+      const endpoint=commerceMode?api+'/wp-json/palma/v1/order':api+'/api/orders';
+      const r=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
       const j=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(j.error||'Order API gagal');
       localStorage.removeItem('palmaCart');
