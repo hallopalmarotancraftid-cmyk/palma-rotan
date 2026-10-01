@@ -220,16 +220,9 @@ final class Palma_Rotan_Commerce_Bridge {
     }
 
     private static function ensure_documents($order) {
-        $upload=wp_upload_dir();
-        $dir=trailingslashit($upload['basedir']).'palma-documents';
-        $url=trailingslashit($upload['baseurl']).'palma-documents';
-        if (!wp_mkdir_p($dir)) return;
-        $invoice=$dir.'/invoice-'.$order->get_id().'.html';
-        $packing=$dir.'/packing-'.$order->get_id().'.html';
-        if (!file_exists($invoice)) file_put_contents($invoice,self::document_html($order,'invoice'));
-        if (!file_exists($packing)) file_put_contents($packing,self::document_html($order,'packing'));
-        update_post_meta($order->get_id(),'_palma_invoice_url',$url.'/'.basename($invoice));
-        update_post_meta($order->get_id(),'_palma_packing_url',$url.'/'.basename($packing));
+        if (!$order) return;
+        // Documents are rendered dynamically through the protected REST endpoint.
+        // Do not write public HTML files into wp-content/uploads.
         update_post_meta($order->get_id(),'_palma_invoice_number','INV-PR-'.gmdate('Y').'-'.str_pad((string)$order->get_id(),8,'0',STR_PAD_LEFT));
         update_post_meta($order->get_id(),'_palma_packing_number','PK-PR-'.gmdate('Y').'-'.str_pad((string)$order->get_id(),8,'0',STR_PAD_LEFT));
     }
