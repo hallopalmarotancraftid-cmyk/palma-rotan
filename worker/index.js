@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-09-30-production-fix-4";
+var BUILD_ID = "2026-10-01-invoice-qr-product-fix-5";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -952,7 +952,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
   addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
   addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  addObj(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R /QR 10 0 R >> >> /Contents 7 0 R >>");
+  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R${qrImage ? " /QR 10 0 R" : ""} >> /Contents 7 0 R >>`);
   addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
@@ -1019,17 +1019,30 @@ async function adminMedia(request, env) {
 }
 __name(adminMedia, "adminMedia");
 async function loadPdfOrderItems(env, order) {
-  const orderRefs = new Set([
-    String(order.id || "").trim(),
-    String(order.order_number || "").trim(),
-    String(order.order_number || "").trim().replace(/^#/, "")
-  ].filter(Boolean));
-  const rows = (await env.DB.prepare(
-    "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid"
-  ).all()).results || [];
-  const raw = rows.filter(item => orderRefs.has(String(item.order_id || "").trim()));
-  if (!raw.length) return [];
-  return raw.map((item, index) => ({
+  const refs=[...new Set([
+    String(order.id||"").trim(),
+    String(order.order_number||"").trim(),
+    String(order.order_number||"").trim().replace(/^#/,"")
+  ].filter(Boolean))];
+
+  let raw=[];
+  for(const ref of refs){
+    const result=await env.DB.prepare(
+      "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE TRIM(CAST(oi.order_id AS TEXT))=? ORDER BY oi.rowid"
+    ).bind(ref).all();
+    raw=result.results||[];
+    if(raw.length)break;
+  }
+
+  if(!raw.length && order.order_number){
+    raw=(await env.DB.prepare(
+      "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE lower(TRIM(CAST(oi.order_id AS TEXT)))=lower(TRIM(?)) ORDER BY oi.rowid"
+    ).bind(String(order.order_number)).all()).results||[];
+  }
+
+  if(!raw.length)return [];
+
+  return raw.map((item,index)=>({
     ...item,
     id:item.id||("pdf_item_"+index),
     product_name:item.product_name||item.name||"Product",
@@ -1047,8 +1060,7 @@ async function loadPdfOrderItems(env, order) {
     hs_code:item.hs_code||"",
     package_type:item.package_type||""
   }));
-}
-__name(loadPdfOrderItems, "loadPdfOrderItems");
+}__name(loadPdfOrderItems, "loadPdfOrderItems");
 
 function base64Url(value){return btoa(value)}
 function base64UrlDecode(value){return atob(String(value||""))}
