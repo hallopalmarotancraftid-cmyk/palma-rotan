@@ -482,12 +482,38 @@ function timingSafeEqualHex(a, b) {
 }
 __name(timingSafeEqualHex, "timingSafeEqualHex");
 async function markOrderPaid(orderId, payment, env, actor = "system") {
+  await ensurePaymentFoundationSchema(env);
   await ensureProductLogisticsSchema(env);
   await ensureShippingSchema(env);
+
   const order = await env.DB.prepare(`SELECT * FROM orders WHERE id=?`).bind(orderId).first();
   if (!order) return { ok: false, status: 404, error: "Order tidak ditemukan" };
-  if (order.payment_status === "PAID") return { ok: true, alreadyPaid: true, order };
-  const items = (await env.DB.prepare(`SELECT oi.*,p.stock,p.active,p.weight_kg,p.dimensions_cm,p.units_per_package,p.packaging_weight_kg FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?`).bind(orderId).all()).results || [];
+  if (order.payment_status === "PAID") {
+    const existingPaidPayment = await env.DB.prepare(
+      `SELECT * FROM payments WHERE order_id=? AND status='PAID' ORDER BY verified_at DESC, created_at DESC LIMIT 1`
+    ).bind(orderId).first();
+    return { ok: true, alreadyPaid: true, order, payment: existingPaidPayment || null };
+  }
+
+  const items = (await env.DB.prepare(`
+    SELECT oi.*,p.stock,p.active,p.weight_kg,p.dimensions_cm,p.units_per_package,p.packaging_weight_kg
+    FROM order_items oi
+    JOIN products p ON p.id=oi.product_id
+    WHERE oi.order_id=?
+  `).bind(orderId).all()).results || [];
+  if (!items.length) return { ok: false, status: 400, error: "Order tidak memiliki item" };
+
+  for (const item of items) {
+    const requested = Number(item.quantity || 0);
+    const currentStock = Number(item.stock || 0);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      return { ok: false, status: 400, error: `Jumlah produk tidak valid untuk ${item.product_name || item.product_id}` };
+    }
+    if (currentStock < requested) {
+      return { ok: false, status: 409, error: `Stok produk ${item.product_name || item.product_id} tidak mencukupi` };
+    }
+  }
+
   let shippingCountry="";
   try { shippingCountry=String(JSON.parse(order.shipping_address_json||"{}").country||"").trim(); } catch (_) {}
   const shippingCarrier=shippingCarrierForCountry(shippingCountry);
@@ -496,7 +522,6 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
   const netWeight=items.reduce((sum,item)=>sum+(Number(item.weight_kg)||0)*(Number(item.quantity)||0),0);
   const packagingWeight=items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1)))*(Number(item.packaging_weight_kg)||0),0);
   const grossWeight=netWeight+packagingWeight;
-  if (!items.length) return { ok: false, status: 400, error: "Order tidak memiliki item" };
 
   const provider = String(payment.provider || "manual").toLowerCase();
   const isMidtrans = provider === "midtrans";
@@ -510,41 +535,103 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     return { ok: false, status: 400, error: "Mata uang pembayaran tidak sesuai order" };
   }
 
-  const paymentId = payment.id || id("pay");
-  const invoiceNo = `INV-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-  const packingNo = `PK-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-  const statements = [
-    env.DB.prepare(`INSERT INTO payments(id,order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(
-      paymentId, orderId, isMidtrans ? "midtrans" : "manual",
-      payment.method || (isMidtrans ? "snap" : "bank_transfer"), payment.providerTransactionId || null,
-      paymentAmount, paymentCurrency, "PAID"
-    ),
-  ];
+  const providerTransactionId = payment.providerTransactionId || null;
+  let existingPayment = null;
+  if (providerTransactionId) {
+    existingPayment = await env.DB.prepare(
+      `SELECT * FROM payments WHERE provider=? AND provider_transaction_id=? LIMIT 1`
+    ).bind(provider, providerTransactionId).first();
+    if (existingPayment && existingPayment.order_id !== orderId) {
+      return { ok: false, status: 409, error: "Transaksi pembayaran sudah terhubung ke order lain" };
+    }
+  }
+  if (!existingPayment) {
+    existingPayment = await env.DB.prepare(
+      `SELECT * FROM payments WHERE order_id=? AND status<>'PAID' ORDER BY created_at DESC LIMIT 1`
+    ).bind(orderId).first();
+  }
+
+  const paymentId = existingPayment?.id || payment.id || id("pay");
+  const now = new Date().toISOString();
+  const invoiceExisting = await env.DB.prepare(
+    `SELECT id,invoice_number FROM invoices WHERE order_id=? LIMIT 1`
+  ).bind(orderId).first();
+  const packingExisting = await env.DB.prepare(
+    `SELECT id,packing_number,auth_code FROM packing_orders WHERE order_id=? LIMIT 1`
+  ).bind(orderId).first();
+  const invoiceNo = invoiceExisting?.invoice_number || `INV-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const packingNo = packingExisting?.packing_number || `PK-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const authCode = packingExisting?.auth_code || (crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16));
+
+  const statements = [];
+  if (existingPayment) {
+    statements.push(env.DB.prepare(`
+      UPDATE payments
+      SET provider=?,method=?,provider_transaction_id=COALESCE(?,provider_transaction_id),
+          amount=?,currency=?,status='PAID',verified_at=CURRENT_TIMESTAMP,
+          updated_at=CURRENT_TIMESTAMP,raw_response=COALESCE(?,raw_response)
+      WHERE id=? AND order_id=? AND status<>'PAID'
+    `).bind(
+      provider, payment.method || (isMidtrans ? "snap" : "bank_transfer"),
+      providerTransactionId, paymentAmount, paymentCurrency,
+      payment.rawResponse ? JSON.stringify(payment.rawResponse) : null,
+      paymentId, orderId
+    ));
+  } else {
+    statements.push(env.DB.prepare(`
+      INSERT INTO payments(id,order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at,updated_at,raw_response)
+      VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)
+    `).bind(
+      paymentId, orderId, provider,
+      payment.method || (isMidtrans ? "snap" : "bank_transfer"),
+      providerTransactionId, paymentAmount, paymentCurrency, "PAID",
+      payment.rawResponse ? JSON.stringify(payment.rawResponse) : null
+    ));
+  }
+
   for (const item of items) {
-    statements.push(env.DB.prepare(`UPDATE products SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND stock>=?`).bind(item.quantity, item.product_id, item.quantity));
-    statements.push(env.DB.prepare(`INSERT INTO stock_movements(id,product_id,order_id,quantity_before,quantity_change,quantity_after,reason,created_at) VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(
+    statements.push(env.DB.prepare(
+      `UPDATE products SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND stock>=?`
+    ).bind(item.quantity, item.product_id, item.quantity));
+    statements.push(env.DB.prepare(
+      `INSERT INTO stock_movements(id,product_id,order_id,quantity_before,quantity_change,quantity_after,reason,created_at)
+       VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
+    ).bind(
       id("mov"), item.product_id, orderId, item.stock, -item.quantity, item.stock - item.quantity, "PAID_ORDER"
     ));
   }
+
   statements.push(
     env.DB.prepare(`UPDATE orders SET payment_status='PAID',order_status='PROCESSING',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(orderId),
-    env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(id("hist"), orderId, "PROCESSING", "Pembayaran terverifikasi; stok dikurangi otomatis"),
-    env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"), orderId, invoiceNo),
-    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16), shippingCarrier, trackingNumber, carrierTrackingUrl(shippingCarrier,trackingNumber), packageCount, grossWeight, netWeight),
+    env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note,status_type,actor) VALUES(?,?,?,?,?,?)`).bind(
+      id("hist"), orderId, "PROCESSING", "Pembayaran terverifikasi; stok dikurangi otomatis", "ORDER", actor
+    ),
+    invoiceExisting
+      ? env.DB.prepare(`UPDATE invoices SET status='READY' WHERE id=?`).bind(invoiceExisting.id)
+      : env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"), orderId, invoiceNo),
+    packingExisting
+      ? env.DB.prepare(`UPDATE packing_orders SET status='PENDING',courier=COALESCE(courier,?),tracking_number=COALESCE(tracking_number,?),tracking_url=COALESCE(tracking_url,?),package_count=COALESCE(package_count,?),gross_weight_kg=COALESCE(gross_weight_kg,?),net_weight_kg=COALESCE(net_weight_kg,?),auth_code=COALESCE(auth_code,?) WHERE id=?`).bind(
+          shippingCarrier, trackingNumber, carrierTrackingUrl(shippingCarrier,trackingNumber), packageCount, grossWeight, netWeight, authCode, packingExisting.id
+        )
+      : env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(
+          id("pack"), orderId, packingNo, authCode, shippingCarrier, trackingNumber, carrierTrackingUrl(shippingCarrier,trackingNumber), packageCount, grossWeight, netWeight
+        ),
     env.DB.prepare(`INSERT INTO payment_audit(id,order_id,payment_id,actor,action,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
       id("pa"), orderId, paymentId, actor, "PAYMENT_VERIFIED",
-      JSON.stringify({ provider: isMidtrans ? "midtrans" : "manual", method: payment.method || null, providerTransactionId: payment.providerTransactionId || null })
+      JSON.stringify({ provider, method: payment.method || null, providerTransactionId, replaySafe: true, at: now })
     )
   );
+
   try {
     await env.DB.batch(statements);
   } catch (error) {
     console.error("PAYMENT_BATCH_ROLLBACK", { orderId, message: error?.message || String(error) });
     return { ok: false, status: 409, error: "Stok berubah atau transaksi pembayaran tidak dapat diproses" };
   }
+
   const paidOrder=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.auth_code,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg,pk.net_weight_kg,pk.packaging_type,pk.dimensions_cm FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(orderId).first();
   if(paidOrder?.email){try{const rows=await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','businessPhone','email','address','pdfTagline1','pdfTagline2','countryOrigin','exporter','paymentTerms','incoterms','portLoading','portDestination')").all();const branding=Object.fromEntries((rows.results||[]).map(row=>{let v=row.value_json;try{v=JSON.parse(v)}catch(_){}return [row.key,v]}));await sendOrderDocumentsEmail(paidOrder,items,branding,env)}catch(error){console.error("ORDER_DOCUMENT_EMAIL_ERROR",{orderId,message:error?.message||String(error)});await env.DB.prepare("UPDATE packing_orders SET email_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,500),orderId).run().catch(()=>{})}}
-  return { ok: true, alreadyPaid: false, invoiceNo, packingNo };
+  return { ok: true, alreadyPaid: false, invoiceNo, packingNo, paymentId };
 }
 __name(markOrderPaid, "markOrderPaid");
 async function adminVerifyPayment(request, env) {
