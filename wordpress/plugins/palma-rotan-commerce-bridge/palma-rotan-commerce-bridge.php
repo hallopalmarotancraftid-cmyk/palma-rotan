@@ -105,7 +105,7 @@ final class Palma_Rotan_Commerce_Bridge {
             $shipping_method = sanitize_text_field($body['shippingMethod'] ?? 'Standard');
             $country = strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? ''));
             $currency = strtoupper(sanitize_text_field($body['currency'] ?? 'USD')) === 'IDR' ? 'IDR' : 'USD';
-            $order->set_currency($currency);
+            $order->set_currency('IDR');
 
             foreach ($items as $row) {
                 $lookup = sanitize_text_field($row['sku'] ?? $row['productId'] ?? '');
@@ -117,14 +117,23 @@ final class Palma_Rotan_Commerce_Bridge {
                 if (!$product) throw new Exception('Produk tidak ditemukan: '.$lookup);
                 $qty = max(1, (int) ($row['quantity'] ?? 1));
                 if ($product->managing_stock() && $product->get_stock_quantity() < $qty) throw new Exception('Stok tidak mencukupi untuk '.$product->get_name());
-                $order->add_product($product, $qty);
+                $price_idr = (float) get_post_meta($product->get_id(), '_palma_price_idr', true);
+                $base_price = (float) $product->get_regular_price();
+                $unit_idr = $price_idr > 0 ? $price_idr : ($currency === 'USD' ? $base_price * $rate : $base_price);
+                if ($unit_idr <= 0) throw new Exception('Harga produk tidak valid: '.$product->get_name());
+                $line = new WC_Order_Item_Product();
+                $line->set_product($product);
+                $line->set_quantity($qty);
+                $line->set_subtotal(round($unit_idr * $qty, 2));
+                $line->set_total(round($unit_idr * $qty, 2));
+                $order->add_item($line);
             }
 
             $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
             $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
             $usd = $base[$country] ?? 55;
             if (strtolower($shipping_method) === 'express') $usd *= 1.7;
-            $shipping_total = $currency === 'IDR' ? round($usd * $rate) : round($usd, 2);
+            $shipping_total = round($usd * $rate);
             $item = new WC_Order_Item_Shipping();
             $item->set_method_title($shipping_method . ' · ' . ($country === 'ID' ? 'J&T' : 'DHL'));
             $item->set_method_id('palma_' . sanitize_key($shipping_method));
@@ -155,9 +164,13 @@ final class Palma_Rotan_Commerce_Bridge {
                 'orderId'=>$order->get_id(),
                 'orderNumber'=>$order->get_order_number(),
                 'status'=>$order->get_status(),
+                'currency'=>$currency,
+                'paymentCurrency'=>'IDR',
                 'subtotal'=>(float) $order->get_subtotal(),
-                'shippingAmount'=>(float) $order->get_shipping_total(),
-                'total'=>(float) $order->get_total(),
+                'shippingAmount'=>(float) ($currency === 'USD' ? $order->get_shipping_total() / $rate : $order->get_shipping_total()),
+                'shippingAmountIdr'=>(float) $order->get_shipping_total(),
+                'total'=>(float) ($currency === 'USD' ? $order->get_total() / $rate : $order->get_total()),
+                'totalIdr'=>(float) $order->get_total(),
                 'paymentUrl'=>$payment_url,
                 'paymentGateway'=>$gateway_id,
                 'orderKey'=>$order->get_order_key(),
