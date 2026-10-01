@@ -668,7 +668,7 @@ function makeShippingLabelPdf(order, branding = {}) {
   return new TextEncoder().encode(pdf);
 }
 __name(makeShippingLabelPdf,"makeShippingLabelPdf");
-function makeProfessionalPdf(type, order, items, branding = {}) {
+async function makeProfessionalPdf(type, order, items, branding = {}) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
   const commands = [];
