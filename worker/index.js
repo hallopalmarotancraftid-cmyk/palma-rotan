@@ -1060,7 +1060,8 @@ async function loadPdfOrderItems(env, order) {
     hs_code:item.hs_code||"",
     package_type:item.package_type||""
   }));
-}__name(loadPdfOrderItems, "loadPdfOrderItems");
+}
+__name(loadPdfOrderItems, "loadPdfOrderItems");
 
 function base64Url(value){return btoa(value)}
 function base64UrlDecode(value){return atob(String(value||""))}
