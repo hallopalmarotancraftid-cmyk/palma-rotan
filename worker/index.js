@@ -235,6 +235,17 @@ function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&
 __name(generatedTrackingNumber,"generatedTrackingNumber");
 function carrierTrackingUrl(carrier,tracking){const t=String(tracking||"").trim();if(carrier==="J&T")return "https://www.jet.co.id/track"+(t?"?bills="+encodeURIComponent(t):"");return "https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(t)}
 __name(carrierTrackingUrl,"carrierTrackingUrl");
+function calculateShippingAmount(country, method, currency, usdToIdrRate) {
+  const base = { ID: 6, US: 45, CA: 48, GB: 42, AU: 38, SG: 18, DE: 44, FR: 44, NL: 44 }[String(country || "").trim().toUpperCase()] ?? 55;
+  const usd = String(method || "").trim().toLowerCase() === "express" ? base * 1.7 : base;
+  if (String(currency || "").toUpperCase() === "IDR") {
+    const rate = Number(usdToIdrRate);
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error("USD to IDR rate tidak valid");
+    return Math.round(usd * rate);
+  }
+  return Number(usd.toFixed(2));
+}
+__name(calculateShippingAmount, "calculateShippingAmount");
 async function createOrder(request, env) {
   const body = await request.json();
   if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Keranjang kosong" }, 400, cors(request));
@@ -259,7 +270,8 @@ async function createOrder(request, env) {
   }
   const country=String(body.shippingAddress?.country||body.customer?.country||"").trim();
   const shippingCarrier=shippingCarrierForCountry(country);
-  const shipping = Math.max(0, Number(body.shippingAmount) || 0);
+  const requestedShippingMethod=String(body.shippingMethod||"Standard").trim();
+  const shipping = calculateShippingAmount(country, requestedShippingMethod, currency, rate);
   const orderId = id("ord");
   const orderNumber = `PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   const customerEmail = String(body.customer?.email || "").trim().toLowerCase() || null;
@@ -319,8 +331,12 @@ async function createOrder(request, env) {
     return json({ error: "Data item pesanan gagal disimpan dengan lengkap", orderId, orderNumber }, 500, cors(request));
   }
 
-  const requestedGateway = String(body.paymentGateway || body.paymentMethod || "").toLowerCase();
+  const requestedGateway = String(body.paymentGateway || body.paymentMethod || "").trim().toLowerCase();
+  const supportedManual = ["bank transfer", "transfer bank"];
   const useMidtrans = ["gateway", "midtrans", "snap", "payment gateway"].includes(requestedGateway);
+  if (!useMidtrans && !supportedManual.includes(requestedGateway)) {
+    return json({ error: "Metode pembayaran belum didukung. Gunakan Payment Gateway (Midtrans) atau Bank Transfer." }, 400, cors(request));
+  }
   if (useMidtrans) {
     try {
       const snap = await createMidtransSnap(
@@ -330,7 +346,7 @@ async function createOrder(request, env) {
       );
       await env.DB.prepare(`UPDATE orders SET payment_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(snap.redirect_url, orderId).run();
       return json({
-        orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr,
+        orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, shippingMethod: requestedShippingMethod, total, adminTotalIdr,
         paymentUrl: snap.redirect_url, paymentToken: snap.token
       }, 201, cors(request));
     } catch (error) {
@@ -347,7 +363,7 @@ async function createOrder(request, env) {
       }, 502, cors(request));
     }
   }
-  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(request));
+  return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, shippingMethod: requestedShippingMethod, total, adminTotalIdr }, 201, cors(request));
 }
 __name(createOrder, "createOrder");
 async function adminOrders(request, env) {
