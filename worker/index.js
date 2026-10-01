@@ -310,7 +310,7 @@ async function createOrder(request, env) {
   statements.push(
     env.DB.prepare(`INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_address_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(
       orderId, orderNumber, customerId, currency, subtotal, shipping, total, rate, adminTotalIdr,
-      body.shippingMethod || "", JSON.stringify(body.shippingAddress || {})
+      requestedShippingMethod, JSON.stringify(body.shippingAddress || {})
     ),
     ...items.map((i) => env.DB.prepare(`INSERT INTO order_items(id,order_id,product_id,product_name,quantity,unit_price,currency,total_price) VALUES(?,?,?,?,?,?,?,?)`).bind(
       id("item"), orderId, i.p.id, i.p.name, i.qty, i.p.amount, currency, i.total
