@@ -405,7 +405,26 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
   await ensureShippingSchema(env);
   const order = await env.DB.prepare(`SELECT * FROM orders WHERE id=?`).bind(orderId).first();
   if (!order) return { ok: false, status: 404, error: "Order tidak ditemukan" };
-  if (order.payment_status === "PAID") return { ok: true, alreadyPaid: true, order };
+  if (order.payment_status === "PAID") {
+    const existing = await env.DB.prepare(`SELECT i.invoice_number,pk.packing_number FROM orders o LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=?`).bind(orderId).first();
+    if (!existing?.invoice_number || !existing?.packing_number) {
+      const items = (await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm,p.units_per_package,p.packaging_weight_kg FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?`).bind(orderId).all()).results || [];
+      const shippingCountry = (() => { try { return String(JSON.parse(order.shipping_address_json||"{}").country||"").trim(); } catch (_) { return ""; } })();
+      const shippingCarrier = shippingCarrierForCountry(shippingCountry);
+      const packageCount = Math.max(1, items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1))),0));
+      const netWeight = items.reduce((sum,item)=>sum+(Number(item.weight_kg)||0)*(Number(item.quantity)||0),0);
+      const packagingWeight = items.reduce((sum,item)=>sum+Math.ceil(Number(item.quantity||0)/Math.max(1,Number(item.units_per_package||1)))*(Number(item.packaging_weight_kg)||0),0);
+      const grossWeight = netWeight + packagingWeight;
+      const invoiceNo = existing?.invoice_number || `INV-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+      const packingNo = existing?.packing_number || `PK-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+      const statements = [];
+      if (!existing?.invoice_number) statements.push(env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"),orderId,invoiceNo));
+      if (!existing?.packing_number) statements.push(env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"),orderId,packingNo,crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16),shippingCarrier,null,carrierTrackingUrl(shippingCarrier,null),packageCount,grossWeight,netWeight));
+      if (statements.length) await env.DB.batch(statements);
+      return { ok:true, alreadyPaid:true, order, invoiceNo, packingNo };
+    }
+    return { ok:true, alreadyPaid:true, order, invoiceNo:existing.invoice_number, packingNo:existing.packing_number };
+  }
   const items = (await env.DB.prepare(`SELECT oi.*,p.stock,p.active,p.weight_kg,p.dimensions_cm,p.units_per_package,p.packaging_weight_kg FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?`).bind(orderId).all()).results || [];
   let shippingCountry="";
   try { shippingCountry=String(JSON.parse(order.shipping_address_json||"{}").country||"").trim(); } catch (_) {}
