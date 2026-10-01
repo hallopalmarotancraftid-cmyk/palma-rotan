@@ -979,7 +979,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     // footer and below the payment method so it cannot collide with other
     // barcode blocks.
     if(qrMatrix){
-      const qrSize=72,qrX=W-M-qrSize,qrY=118,unit=qrSize/qrMatrix.width;
+      const qrSize=72,qrX=W-M-qrSize,qrY=type==="packing"?Math.max(30,Math.min(118,Math.max(30,(y-82)-70))):118,unit=qrSize/qrMatrix.width;
       commands.push("q 1 1 1 rg",`${qrX} ${qrY} ${qrSize} ${qrSize} re f`,"Q");
       commands.push("q 0 0 0 rg");
       for(let row=0;row<qrMatrix.rows.length;row++){
