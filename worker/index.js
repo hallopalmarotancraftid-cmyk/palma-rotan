@@ -940,6 +940,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       text(qrX,qrY-12,"ORDER AUTHENTICATION QR",6.5,"F2",muted);
       text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
     }
+  }
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
