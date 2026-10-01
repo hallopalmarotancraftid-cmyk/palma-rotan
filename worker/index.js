@@ -1252,10 +1252,19 @@ async function adminDocumentAccess(request,env){
   const order=await env.DB.prepare("SELECT id FROM orders WHERE id=? OR order_number=? OR lower(order_number)=lower(?) LIMIT 1").bind(decoded,decoded,decoded).first();
   if(!order)return json({error:"Order tidak ditemukan",reference:decoded},404,cors(request));
   const token=await createDocumentAccessToken(env,type,decoded);
+  const path="/api/admin/documents/"+type+"/"+encodeURIComponent(decoded);
   const url=new URL(request.url);
-  url.pathname="/api/admin/documents/"+type+"/"+encodeURIComponent(decoded);
+  url.pathname=path;
   url.search="?access_token="+encodeURIComponent(token);
-  return json({ok:true,url:url.toString(),expiresInSeconds:300},200,cors(request));
+  return json({
+    ok:true,
+    url:url.toString(),
+    path,
+    access_token:token,
+    type,
+    ref:decoded,
+    expiresInSeconds:300
+  },200,cors(request));
 }
 
 async function documentPdf(request, env, type, orderId) {
