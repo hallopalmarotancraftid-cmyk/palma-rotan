@@ -670,7 +670,7 @@ function pdfLogoImage() {
     const rr=y*width*3, aa=y*(width+1);
     for(let x=0;x<width;x++){
       const a=alpha[aa+1+x];
-      const i=rr+1+x*3;
+      const i=rr+x*3;
       if(a<255){
         rgb[i]=Math.round((rgb[i]*a+255*(255-a))/255);
         rgb[i+1]=Math.round((rgb[i+1]*a+255*(255-a))/255);
