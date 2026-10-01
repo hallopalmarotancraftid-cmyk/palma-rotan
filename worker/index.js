@@ -999,8 +999,20 @@ __name(adminMedia, "adminMedia");
 async function loadPdfOrderItems(env, order) {
   // Current orders store the D1 order id in order_items.order_id. Older orders
   // may have stored the public order number instead, so support both references.
-  let rows = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE CAST(oi.order_id AS TEXT)=CAST(? AS TEXT) OR CAST(oi.order_id AS TEXT)=CAST(? AS TEXT) ORDER BY oi.rowid").bind(order.id, order.order_number || "").all()).results || [];
+  let rows = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE TRIM(CAST(oi.order_id AS TEXT))=TRIM(CAST(? AS TEXT)) OR TRIM(CAST(oi.order_id AS TEXT))=TRIM(CAST(? AS TEXT)) ORDER BY oi.rowid").bind(order.id, order.order_number || "").all()).results || [];
   if (rows.length) return rows;
+
+  // Some legacy records can reference the public order number with a prefix
+  // or URL-decoded value. Retry normalized references before declaring items absent.
+  const refs = [...new Set([
+    String(order.id || "").trim(),
+    String(order.order_number || "").trim(),
+    String(order.order_number || "").trim().replace(/^#/, "")
+  ].filter(Boolean))];
+  for (const ref of refs) {
+    const retry = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE TRIM(CAST(oi.order_id AS TEXT))=? ORDER BY oi.rowid").bind(ref).all()).results || [];
+    if (retry.length) return retry;
+  }
 
   // Legacy compatibility: some older orders may have stored their cart snapshot
   // directly on the orders row instead of creating order_items rows.
