@@ -102,6 +102,11 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->set_shipping_state(sanitize_text_field($shipping['province'] ?? ''));
             $order->set_shipping_postcode(sanitize_text_field($shipping['postalCode'] ?? ''));
 
+            $shipping_method = sanitize_text_field($body['shippingMethod'] ?? 'Standard');
+            $country = strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? ''));
+            $currency = strtoupper(sanitize_text_field($body['currency'] ?? 'USD')) === 'IDR' ? 'IDR' : 'USD';
+            $order->set_currency($currency);
+
             foreach ($items as $row) {
                 $lookup = sanitize_text_field($row['sku'] ?? $row['productId'] ?? '');
                 $product = wc_get_product($lookup);
@@ -115,9 +120,6 @@ final class Palma_Rotan_Commerce_Bridge {
                 $order->add_product($product, $qty);
             }
 
-            $shipping_method = sanitize_text_field($body['shippingMethod'] ?? 'Standard');
-            $country = strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? ''));
-            $currency = strtoupper(sanitize_text_field($body['currency'] ?? 'USD')) === 'IDR' ? 'IDR' : 'USD';
             $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
             $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
             $usd = $base[$country] ?? 55;
@@ -132,8 +134,8 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->update_meta_data('_palma_currency', $currency);
             $order->update_meta_data('_palma_shipping_carrier', $country === 'ID' ? 'J&T' : 'DHL');
             $order->update_meta_data('_palma_shipping_method', $shipping_method);
-            $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total() * ($currency === 'USD' ? $rate : 1)));
             $order->calculate_totals();
+            $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total() * ($currency === 'USD' ? $rate : 1)));
             $order->save();
 
             $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
@@ -158,15 +160,24 @@ final class Palma_Rotan_Commerce_Bridge {
                 'total'=>(float) $order->get_total(),
                 'paymentUrl'=>$payment_url,
                 'paymentGateway'=>$gateway_id,
+                'orderKey'=>$order->get_order_key(),
             ], 201));
         } catch (Throwable $e) {
             return self::error($e->getMessage(), 400);
         }
     }
 
+    private static function authorize_order($order, WP_REST_Request $request) {
+        if (!$order) return false;
+        $key = sanitize_text_field($request->get_param('key'));
+        if (!$key) $key = sanitize_text_field($request->get_header('X-Palma-Order-Key'));
+        return $key && hash_equals((string) $order->get_order_key(), (string) $key);
+    }
+
     public static function order(WP_REST_Request $request) {
         $order = wc_get_order((int) $request['id']);
         if (!$order) return self::error('Order tidak ditemukan.', 404);
+        if (!self::authorize_order($order, $request)) return self::error('Order key tidak valid.', 403);
         return self::cors(new WP_REST_Response(self::order_data($order), 200));
     }
 
@@ -197,8 +208,8 @@ final class Palma_Rotan_Commerce_Bridge {
             'subtotal'=>(float)$order->get_subtotal(),
             'shippingAmount'=>(float)$order->get_shipping_total(),
             'total'=>(float)$order->get_total(),
-            'invoiceUrl'=>get_post_meta($order->get_id(),'_palma_invoice_url',true),
-            'packingUrl'=>get_post_meta($order->get_id(),'_palma_packing_url',true),
+            'invoiceUrl'=>$order->is_paid() ? rest_url(self::REST_NS.'/document/invoice/'.$order->get_id()).'?key='.rawurlencode($order->get_order_key()) : '',
+            'packingUrl'=>$order->is_paid() ? rest_url(self::REST_NS.'/document/packing/'.$order->get_id()).'?key='.rawurlencode($order->get_order_key()) : '',
         ];
     }
 
@@ -242,13 +253,14 @@ final class Palma_Rotan_Commerce_Bridge {
     public static function document(WP_REST_Request $request) {
         $order=wc_get_order((int)$request['id']);
         if(!$order) return self::error('Order tidak ditemukan.',404);
+        if(!self::authorize_order($order, $request)) return self::error('Order key tidak valid.',403);
         if(!$order->is_paid()) return self::error('Dokumen tersedia setelah pembayaran berhasil.',403);
-        self::ensure_documents($order);
         $type=$request['type'];
-        $meta=$type==='invoice'?'_palma_invoice_url':'_palma_packing_url';
-        $url=get_post_meta($order->get_id(),$meta,true);
-        if(!$url) return self::error('Dokumen belum tersedia.',404);
-        wp_redirect($url,302); exit;
+        self::ensure_documents($order);
+        $html=self::document_html($order,$type);
+        $response=new WP_REST_Response($html,200);
+        $response->header('Content-Type','text/html; charset=utf-8');
+        return self::cors($response);
     }
 
     public static function admin_menu() {
@@ -266,7 +278,7 @@ final class Palma_Rotan_Commerce_Bridge {
         $orders=wc_get_orders(['limit'=>30,'orderby'=>'date','order'=>'DESC']);
         echo '<div class="wrap"><h1>PALMA ROTAN — Orders</h1><p>WooCommerce adalah sumber order utama. Invoice dan Packing List dibuat otomatis setelah pembayaran berhasil.</p>';
         echo '<table class="widefat striped"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th>Documents</th></tr></thead><tbody>';
-        foreach($orders as $o){self::ensure_documents($o);$inv=esc_url(get_post_meta($o->get_id(),'_palma_invoice_url',true));$pack=esc_url(get_post_meta($o->get_id(),'_palma_packing_url',true));echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a>':'').'</td></tr>'; }
+        foreach($orders as $o){if($o->is_paid())self::ensure_documents($o);$key=rawurlencode($o->get_order_key());$inv=$o->is_paid()?esc_url(rest_url(self::REST_NS.'/document/invoice/'.$o->get_id()).'?key='.$key):'';$pack=$o->is_paid()?esc_url(rest_url(self::REST_NS.'/document/packing/'.$o->get_id()).'?key='.$key):'';echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a>':'').'</td></tr>'; }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
         echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
