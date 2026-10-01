@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-01-invoice-qr-product-fix-6";
+var BUILD_ID = "2026-10-01-invoice-qr-product-fix-7";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -668,7 +668,7 @@ function pdfLogoImage() {
   return {width,height,rgb:deflateSync(rgb),alpha:deflateSync(alpha)};
 }
 
-async function qrPngMatrix(value) {
+async function qrPdfImage(value) {
   const data=String(value||"").trim();
   if(!data) return null;
   const url="https://api.qrserver.com/v1/create-qr-code/?size=240x240&ecc=H&margin=2&format=png&data="+encodeURIComponent(data);
@@ -676,48 +676,18 @@ async function qrPngMatrix(value) {
   if(!response.ok) throw new Error("QR service HTTP "+response.status);
   const png=Buffer.from(await response.arrayBuffer());
   if(png.length<32||png.toString("ascii",1,4)!=="PNG") throw new Error("QR response bukan PNG");
-  const u32=o=>png.readUInt32BE(o);
-  const width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
+  const u32=o=>png.readUInt32BE(o),width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
   if(depth!==8||(colorType!==2&&colorType!==6)) throw new Error("QR PNG format tidak didukung");
-  const channels=colorType===6?4:3;
-  const idats=[];let p=8;
-  while(p+12<=png.length){
-    const len=u32(p),kind=png.toString("ascii",p+4,p+8),ds=p+8,de=ds+len;
-    if(kind==="IDAT") idats.push(png.subarray(ds,de));
-    p=de+4;
-    if(kind==="IEND") break;
-  }
-  const raw=inflateSync(Buffer.concat(idats));
-  const stride=width*channels;
-  const rows=[];
+  const channels=colorType===6?4:3,idats=[];let p=8;
+  while(p+12<=png.length){const len=u32(p),kind=png.toString("ascii",p+4,p+8),a=p+8,b=a+len;if(kind==="IDAT")idats.push(png.subarray(a,b));p=b+4;if(kind==="IEND")break}
+  const raw=inflateSync(Buffer.concat(idats)),stride=width*channels,rowSize=1+width*3,rgb=Buffer.alloc(rowSize*height);
   let src=0,prev=Buffer.alloc(stride);
   const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
-  for(let y=0;y<height;y++){
-    const filter=raw[src++],row=Buffer.alloc(stride);
-    for(let x=0;x<stride;x++){
-      const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];
-      let out=v;
-      if(filter===1) out=(v+left)&255;
-      else if(filter===2) out=(v+up)&255;
-      else if(filter===3) out=(v+Math.floor((left+up)/2))&255;
-      else if(filter===4) out=(v+paeth(left,up,ul))&255;
-      else if(filter!==0) throw new Error("Unsupported QR PNG filter");
-      row[x]=out;
-    }
-    const runs=[];let runStart=-1;
-    for(let x=0;x<width;x++){
-      const j=x*channels;
-      const alpha=channels===4?row[j+3]:255;
-      const lum=(0.299*row[j])+(0.587*row[j+1])+(0.114*row[j+2]);
-      const dark=alpha>32&&lum<128;
-      if(dark&&runStart<0) runStart=x;
-      if(!dark&&runStart>=0){runs.push([runStart,x-runStart]);runStart=-1;}
-    }
-    if(runStart>=0) runs.push([runStart,width-runStart]);
-    rows.push(runs);
-    prev=row;
-  }
-  return {width,height,rows};
+  for(let y=0;y<height;y++){const filter=raw[src++],row=Buffer.alloc(stride);
+    for(let x=0;x<stride;x++){const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];let out=v;
+      if(filter===1)out=(v+left)&255;else if(filter===2)out=(v+up)&255;else if(filter===3)out=(v+Math.floor((left+up)/2))&255;else if(filter===4)out=(v+paeth(left,up,ul))&255;else if(filter!==0)throw new Error("Unsupported QR PNG filter");row[x]=out}
+    let ro=y*rowSize;rgb[ro++]=0;for(let x=0;x<width;x++){const i=x*channels;rgb[ro++]=row[i];rgb[ro++]=row[i+1];rgb[ro++]=row[i+2]}prev=row}
+  return {width,height,rgb:deflateSync(rgb)};
 }
 
 async function makeProfessionalPdf(type, order, items, branding = {}) {
@@ -762,9 +732,9 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     if(cur) out.push(cur); return out.length?out:["-"];
   };
   const logoImage = pdfLogoImage();
-  let qrMatrix=null;
+  let qrImage=null;
   if(type==="invoice"){
-    try{qrMatrix=await qrPngMatrix(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
+    try{qrImage=await qrPdfImage(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
     catch(error){console.error("INVOICE_QR_ERROR",{orderId:order.id,message:error?.message||String(error)});}
   }
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
@@ -964,21 +934,12 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     // Invoice has one clean authentication barcode only. Keep it above the
     // footer and below the payment method so it cannot collide with other
     // barcode blocks.
-    if(qrMatrix){
-      const qrSize=72,qrX=W-M-qrSize,qrY=118,unit=qrSize/qrMatrix.width;
-      commands.push("q 1 1 1 rg",`${qrX} ${qrY} ${qrSize} ${qrSize} re f`,"Q");
-      commands.push("q 0 0 0 rg");
-      for(let row=0;row<qrMatrix.rows.length;row++){
-        const py=qrY+qrSize-(row+1)*unit;
-        for(const [start,len] of qrMatrix.rows[row]){
-          commands.push(`${qrX+start*unit} ${py} ${len*unit+0.02} ${unit+0.02} re f`);
-        }
-      }
-      commands.push("Q");
+    if(qrImage){
+      const qrSize=72,qrX=W-M-qrSize,qrY=118;
+      commands.push("q",`${qrSize} 0 0 ${qrSize} ${qrX} ${qrY} cm`,"/QR Do","Q");
       text(qrX,qrY-12,"ORDER AUTHENTICATION QR",6.5,"F2",muted);
       text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
     }
-  }
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
@@ -994,17 +955,21 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
   addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
   addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> /Contents 7 0 R >>`);
+  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R${qrImage ? " /QR 10 0 R" : ""} >> /Contents 7 0 R >>`);
   addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
   addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /SMask 9 0 R /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
   addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.alpha.length} >>\nstream\n`,data:logoImage.alpha,tail:"\nendstream"});
+  if(qrImage){
+    addObj(10,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
+  }
   const xref=total;
-  addText("xref\n0 10\n0000000000 65535 f \n");
-  for(let i=1;i<=9;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
-  addText(`trailer\n<< /Size 10 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const objectCount=qrImage?10:9;
+  addText(`xref\n0 ${objectCount+1}\n0000000000 65535 f \n`);
+  for(let i=1;i<=objectCount;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
+  addText(`trailer\n<< /Size ${objectCount+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
