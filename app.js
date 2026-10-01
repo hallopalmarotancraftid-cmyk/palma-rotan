@@ -125,6 +125,7 @@ async function syncProductsFromAPI() {
 
       return {
         id: p.id,
+        sku: p.sku || p.id,
 
         name: language === 'ID'
           ? (p.name_id || p.name_en || '')
