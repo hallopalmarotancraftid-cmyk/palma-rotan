@@ -934,21 +934,12 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     // Invoice has one clean authentication barcode only. Keep it above the
     // footer and below the payment method so it cannot collide with other
     // barcode blocks.
-    if(qrMatrix){
-      const qrSize=72,qrX=W-M-qrSize,qrY=118,unit=qrSize/qrMatrix.width;
-      commands.push("q 1 1 1 rg",`${qrX} ${qrY} ${qrSize} ${qrSize} re f`,"Q");
-      commands.push("q 0 0 0 rg");
-      for(let row=0;row<qrMatrix.rows.length;row++){
-        const py=qrY+qrSize-(row+1)*unit;
-        for(const [start,len] of qrMatrix.rows[row]){
-          commands.push(`${qrX+start*unit} ${py} ${len*unit+0.02} ${unit+0.02} re f`);
-        }
-      }
-      commands.push("Q");
+    if(qrImage){
+      const qrSize=72,qrX=W-M-qrSize,qrY=118;
+      commands.push("q",`${qrSize} 0 0 ${qrSize} ${qrX} ${qrY} cm`,"/QR Do","Q");
       text(qrX,qrY-12,"ORDER AUTHENTICATION QR",6.5,"F2",muted);
       text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
     }
-  }
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
