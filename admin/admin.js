@@ -38,6 +38,11 @@ async function showProductionPdfUrl(url,filename){
   }
   modal.querySelector('#pdfCloseBtn').onclick=()=>{if(modal.dataset.objectUrl)URL.revokeObjectURL(modal.dataset.objectUrl);modal.remove()};
 }
+async function openBrandedInvoice(encodedId){
+  // Branded PDF uses the same authenticated production invoice endpoint.
+  // Keep this as a separate button action so the existing document flow remains unchanged.
+  return openProductionDocument('invoice',encodedId);
+}
 async function openProductionDocument(type,id){
   id=decodeURIComponent(id);
   const o=data.orders.find(x=>String(x.productionId||'')===String(id)||String(x.orderNumber||'')===String(id)||String(x.id||'')===String(id));
