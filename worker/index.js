@@ -903,10 +903,6 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   // Packing List: barcode row is placed directly above the weight/shipping
   // summary, with three proportional columns.
   if(type==="packing"){
-    const totalNet=items.reduce((s,it)=>s+(Number(it.weight_kg)||0)*(Number(it.quantity)||0),0);
-    const packageWeight=Number(order.packaging_weight_kg)||0;
-    const gross=Number(order.gross_weight_kg)||totalNet+packageWeight;
-    // Keep the barcode row below the last product row, never over the table.
     const barcodeY=Math.max(y-82,92);
     const bw=(W-2*M-20)/3;
     barcodeSlot(M,barcodeY,bw,72,"TRACKING BARCODE",String(order.tracking_link||""),String(order.tracking_number||"TRACKING LINK"));
@@ -915,18 +911,16 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
         : String(order.order_number||""),String(order.order_number||""));
-    // Shipping Information and Package Summary are intentionally kept
-    // directly under BILL TO / SHIPMENT above. Do not duplicate them here.
-    // This area is reserved for the barcode row and clean document footer.
-  } else {
-    const trackingBarcodeValue=String(order.tracking_link||"");
-    const resiBarcodeValue=String(order.tracking_number||"");
-    const authBarcodeValue=order.order_number&&order.auth_code
-      ? String(order.order_number)+"|"+String(order.auth_code)
-      : String(order.order_number||"");
-    barcodeSlot(M,88,246,76,"TRACKING BARCODE",trackingBarcodeValue,String(order.tracking_number||"TRACKING LINK"));
-    barcodeSlot(305,88,248,76,"RESI / WAYBILL BARCODE",resiBarcodeValue,String(order.tracking_number||"NOT ASSIGNED"));
-    barcodeSlot(M,40,511,40,"ORDER AUTHENTICATION BARCODE",authBarcodeValue);
+  } else if(type==="invoice"){
+    // Invoice has one clean authentication barcode only. Keep it above the
+    // footer and below the payment method so it cannot collide with other
+    // barcode blocks.
+    const invoiceBarcodeY=122;
+    barcodeSlot(M,invoiceBarcodeY,W-2*M,58,"ORDER AUTHENTICATION BARCODE",
+      order.order_number&&order.auth_code
+        ? String(order.order_number)+"|"+String(order.auth_code)
+        : String(order.order_number||""),String(order.order_number||""));
+    text(M,invoiceBarcodeY-15,"Scan to authenticate this invoice/order",7.2,"F1",muted);
   }
   // Footer.
   line(M,24,W-M,24,0.8,tan);
@@ -1006,65 +1000,62 @@ async function adminMedia(request, env) {
 }
 __name(adminMedia, "adminMedia");
 async function loadPdfOrderItems(env, order) {
-  // Current orders store the D1 order id in order_items.order_id. Older orders
-  // may have stored the public order number instead, so support both references.
-  let rows = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE TRIM(CAST(oi.order_id AS TEXT))=TRIM(CAST(? AS TEXT)) OR TRIM(CAST(oi.order_id AS TEXT))=TRIM(CAST(? AS TEXT)) ORDER BY oi.rowid").bind(order.id, order.order_number || "").all()).results || [];
-  if (rows.length) return rows;
-
-  // Some legacy records can reference the public order number with a prefix
-  // or URL-decoded value. Retry normalized references before declaring items absent.
   const refs = [...new Set([
     String(order.id || "").trim(),
     String(order.order_number || "").trim(),
     String(order.order_number || "").trim().replace(/^#/, "")
   ].filter(Boolean))];
+
+  let raw = [];
   for (const ref of refs) {
-    const retry = (await env.DB.prepare("SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE TRIM(CAST(oi.order_id AS TEXT))=? ORDER BY oi.rowid").bind(ref).all()).results || [];
-    if (retry.length) return retry;
+    const result = (await env.DB.prepare(
+      "SELECT * FROM order_items WHERE TRIM(CAST(order_id AS TEXT))=? ORDER BY rowid"
+    ).bind(ref).all()).results || [];
+    if (result.length) { raw = result; break; }
   }
 
-  // Legacy compatibility: some older orders may have stored their cart snapshot
-  // directly on the orders row instead of creating order_items rows.
-  try {
-    const columns = await env.DB.prepare("PRAGMA table_info(orders)").all();
-    const available = new Set((columns.results || []).map(x => String(x.name || "")));
-    const candidates = ["items_json","cart_json","line_items_json","products_json","order_items_json","items"];
-    for (const column of candidates) {
-      if (!available.has(column)) continue;
-      const row = await env.DB.prepare("SELECT \"" + column + "\" AS snapshot FROM orders WHERE id=? LIMIT 1").bind(order.id).first();
-      if (!row?.snapshot) continue;
-      let parsed;
-      try { parsed = typeof row.snapshot === "string" ? JSON.parse(row.snapshot) : row.snapshot; } catch (_) { parsed = null; }
-      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : Array.isArray(parsed?.products) ? parsed.products : [];
-      if (!list.length) continue;
-      rows = list.map((item, index) => ({
-        id: item.id || ("legacy_item_" + index),
-        order_id: order.id,
-        product_id: item.product_id || item.productId || null,
-        product_name: item.product_name || item.productName || item.name || "Product",
-        name: item.name || item.product_name || item.productName || "Product",
-        quantity: Number(item.quantity ?? item.qty ?? 0),
-        qty: Number(item.qty ?? item.quantity ?? 0),
-        unit_price: Number(item.unit_price ?? item.price ?? 0),
-        price: Number(item.price ?? item.unit_price ?? 0),
-        total_price: Number(item.total_price ?? item.total ?? 0),
-        currency: item.currency || order.original_currency || "USD",
-        weight_kg: Number(item.weight_kg || 0),
-        dimensions_cm: item.dimensions_cm || "",
-        sku: item.sku || "",
-        material: item.material || "",
-        hs_code: item.hs_code || item.hsCode || "",
-        package_type: item.package_type || item.packageType || ""
-      }));
-      return rows;
-    }
-  } catch (error) {
-    console.error("PDF_LEGACY_ITEM_FALLBACK_ERROR", {
-      orderId: order?.id,
-      message: error?.message || String(error)
-    });
+  // If legacy data used a different order reference representation, retry the
+  // exact order number case-insensitively through a text comparison.
+  if (!raw.length && order.order_number) {
+    raw = (await env.DB.prepare(
+      "SELECT * FROM order_items WHERE lower(TRIM(CAST(order_id AS TEXT)))=lower(TRIM(?)) ORDER BY rowid"
+    ).bind(String(order.order_number)).all()).results || [];
   }
-  return [];
+
+  if (!raw.length) return [];
+
+  // Enrich from products without making the product join a prerequisite for
+  // rendering the historical order item snapshot.
+  const productIds = [...new Set(raw.map(x => String(x.product_id || "").trim()).filter(Boolean))];
+  const products = new Map();
+  for (const productId of productIds) {
+    const p = await env.DB.prepare(
+      "SELECT id,weight_kg,dimensions_cm,sku,material,hs_code,package_type FROM products WHERE id=? LIMIT 1"
+    ).bind(productId).first();
+    if (p) products.set(productId, p);
+  }
+
+  return raw.map((item, index) => {
+    const p = products.get(String(item.product_id || "").trim()) || {};
+    return {
+      ...item,
+      id: item.id || ("pdf_item_" + index),
+      product_name: item.product_name || item.name || "Product",
+      name: item.name || item.product_name || "Product",
+      quantity: Number(item.quantity ?? item.qty ?? 0),
+      qty: Number(item.qty ?? item.quantity ?? 0),
+      unit_price: Number(item.unit_price ?? item.price ?? 0),
+      price: Number(item.price ?? item.unit_price ?? 0),
+      total_price: Number(item.total_price ?? item.subtotal ?? item.total ?? 0),
+      currency: item.currency || order.original_currency || "USD",
+      weight_kg: Number(item.weight_kg ?? p.weight_kg ?? 0),
+      dimensions_cm: item.dimensions_cm || p.dimensions_cm || "",
+      sku: item.sku || p.sku || "",
+      material: item.material || p.material || "",
+      hs_code: item.hs_code || p.hs_code || "",
+      package_type: item.package_type || p.package_type || ""
+    };
+  });
 }
 __name(loadPdfOrderItems, "loadPdfOrderItems");
 
