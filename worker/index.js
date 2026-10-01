@@ -676,17 +676,47 @@ async function qrPdfImage(value) {
   if(!response.ok) throw new Error("QR service HTTP "+response.status);
   const png=Buffer.from(await response.arrayBuffer());
   if(png.length<32||png.toString("ascii",1,4)!=="PNG") throw new Error("QR response bukan PNG");
-  const u32=o=>png.readUInt32BE(o),width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
-  if(depth!==8||(colorType!==2&&colorType!==6)) throw new Error("QR PNG format tidak didukung");
-  const channels=colorType===6?4:3,idats=[];let p=8;
-  while(p+12<=png.length){const len=u32(p),kind=png.toString("ascii",p+4,p+8),a=p+8,b=a+len;if(kind==="IDAT")idats.push(png.subarray(a,b));p=b+4;if(kind==="IEND")break}
-  const raw=inflateSync(Buffer.concat(idats)),stride=width*channels,rowSize=1+width*3,rgb=Buffer.alloc(rowSize*height);
+  const u32=o=>png.readUInt32BE(o);
+  const width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
+  if(depth!==8||(colorType!==0&&colorType!==2&&colorType!==4&&colorType!==6)){
+    throw new Error("QR PNG format tidak didukung: colorType="+colorType+" bitDepth="+depth);
+  }
+  const channels=colorType===0?1:colorType===2?3:colorType===4?2:4;
+  const idats=[];let p=8;
+  while(p+12<=png.length){
+    const len=u32(p),kind=png.toString("ascii",p+4,p+8),a=p+8,b=a+len;
+    if(kind==="IDAT")idats.push(png.subarray(a,b));
+    p=b+4;
+    if(kind==="IEND")break;
+  }
+  const raw=inflateSync(Buffer.concat(idats));
+  const stride=width*channels,rowSize=1+width*3,rgb=Buffer.alloc(rowSize*height);
   let src=0,prev=Buffer.alloc(stride);
   const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
-  for(let y=0;y<height;y++){const filter=raw[src++],row=Buffer.alloc(stride);
-    for(let x=0;x<stride;x++){const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];let out=v;
-      if(filter===1)out=(v+left)&255;else if(filter===2)out=(v+up)&255;else if(filter===3)out=(v+Math.floor((left+up)/2))&255;else if(filter===4)out=(v+paeth(left,up,ul))&255;else if(filter!==0)throw new Error("Unsupported QR PNG filter");row[x]=out}
-    let ro=y*rowSize;rgb[ro++]=0;for(let x=0;x<width;x++){const i=x*channels;rgb[ro++]=row[i];rgb[ro++]=row[i+1];rgb[ro++]=row[i+2]}prev=row}
+  for(let y=0;y<height;y++){
+    const filter=raw[src++],row=Buffer.alloc(stride);
+    for(let x=0;x<stride;x++){
+      const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];
+      let out=v;
+      if(filter===1)out=(v+left)&255;
+      else if(filter===2)out=(v+up)&255;
+      else if(filter===3)out=(v+Math.floor((left+up)/2))&255;
+      else if(filter===4)out=(v+paeth(left,up,ul))&255;
+      else if(filter!==0)throw new Error("Unsupported QR PNG filter");
+      row[x]=out;
+    }
+    let ro=y*rowSize;rgb[ro++]=0;
+    for(let x=0;x<width;x++){
+      const i=x*channels;
+      if(colorType===0||colorType===4){
+        const gray=row[i];
+        rgb[ro++]=gray;rgb[ro++]=gray;rgb[ro++]=gray;
+      }else{
+        rgb[ro++]=row[i];rgb[ro++]=row[i+1];rgb[ro++]=row[i+2];
+      }
+    }
+    prev=row;
+  }
   return {width,height,rgb:deflateSync(rgb)};
 }
 
