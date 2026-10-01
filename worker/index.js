@@ -732,9 +732,9 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     if(cur) out.push(cur); return out.length?out:["-"];
   };
   const logoImage = pdfLogoImage();
-  let qrMatrix=null;
+  let qrImage=null;
   if(type==="invoice"){
-    try{qrMatrix=await qrPngMatrix(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
+    try{qrImage=await qrPdfImage(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
     catch(error){console.error("INVOICE_QR_ERROR",{orderId:order.id,message:error?.message||String(error)});}
   }
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
