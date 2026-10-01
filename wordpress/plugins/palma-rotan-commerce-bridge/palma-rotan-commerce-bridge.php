@@ -262,16 +262,32 @@ final class Palma_Rotan_Commerce_Bridge {
     private static function document_html($order,$type) {
         $invoice=$type==='invoice';
         $title=$invoice?'INVOICE':'PACKING LIST';
+        self::ensure_documents($order);
         $number=$invoice?get_post_meta($order->get_id(),'_palma_invoice_number',true):get_post_meta($order->get_id(),'_palma_packing_number',true);
-        if (!$number) $number=($invoice?'INV-PR-':'PK-PR-').gmdate('Y').'-'.str_pad((string)$order->get_id(),8,'0',STR_PAD_LEFT);
-        $html='<!doctype html><html><head><meta charset="utf-8"><title>'.esc_html($title.' '.$number).'</title><style>body{font-family:Arial,sans-serif;color:#211a15;margin:40px}h1{letter-spacing:.08em}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.total{text-align:right;font-size:18px;font-weight:700}.muted{color:#6f6257}@media print{button{display:none}}</style></head><body>';
-        $html.='<h1>PALMA ROTAN</h1><p class="muted">'.$title.'<br>'.esc_html($number).'<br>Order #'.esc_html($order->get_order_number()).'</p>';
-        $html.='<h3>BILL TO</h3><p>'.esc_html($order->get_formatted_billing_full_name()).'<br>'.esc_html($order->get_billing_email()).'<br>'.esc_html($order->get_billing_address_1()).'<br>'.esc_html($order->get_billing_city()).' '.esc_html($order->get_billing_postcode()).'<br>'.esc_html($order->get_billing_country()).'</p>';
-        $html.='<table><tr><th>PRODUCT</th><th>SKU</th><th>QTY</th><th>'.($invoice?'TOTAL':'WEIGHT').'</th></tr>';
-        foreach($order->get_items() as $item){$p=$item->get_product();$html.='<tr><td>'.esc_html($item->get_name()).'</td><td>'.esc_html($p?$p->get_sku():'').'</td><td>'.(int)$item->get_quantity().'</td><td>'.($invoice?wp_kses_post(wc_price($item->get_total(),['currency'=>$order->get_currency()])):esc_html(($p?$p->get_weight():0).' kg').'</td></tr>'; }
+        $company_address='Jl. Rotan Jaya Ds. Teluk Wetan RT07/RW01 Kec. Welahan Kab. Jepara Prov. Jawa Tengah Indonesia';
+        $company_phone='08978186933';
+        $company_email='hallo.palmarotancraft.id@gmail.com';
+        $currency=$order->get_currency();
+        $html='<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'.esc_html($title.' '.$number).'</title><style>
+        *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#211a15;margin:0;background:#fff}.page{max-width:900px;margin:0 auto;padding:42px}.head{display:flex;justify-content:space-between;gap:30px;border-bottom:1px solid #d8cbbd;padding-bottom:22px}.brand{font-size:25px;font-weight:700;letter-spacing:.12em}.company{font-size:12px;line-height:1.55;color:#6f6257;max-width:420px}.title{text-align:right}.title h1{margin:0;font-size:28px;letter-spacing:.08em}.title p{margin:7px 0 0;color:#6f6257;font-size:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:26px}.box h3{font-size:11px;letter-spacing:.12em;margin:0 0 8px}.box p{font-size:13px;line-height:1.55;margin:0}.shipping{margin-top:22px;padding:13px 15px;background:#f8f2e9;border:1px solid #e6dccf;font-size:13px}.shipping b{margin-right:12px}table{width:100%;border-collapse:collapse;margin-top:24px;font-size:12px}th{background:#f5eee4;text-align:left;letter-spacing:.05em}th,td{padding:10px;border-bottom:1px solid #ddd}td.num,th.num{text-align:right}.total{margin-left:auto;width:300px;margin-top:20px}.total div{display:flex;justify-content:space-between;padding:7px 0}.total .grand{font-size:17px;font-weight:700;border-top:1px solid #211a15;margin-top:5px;padding-top:11px}.meta{margin-top:24px;font-size:12px;color:#6f6257}.barcode{margin:28px 0 8px;text-align:center;font-family:monospace;font-size:22px;letter-spacing:3px;border:1px solid #ddd;padding:15px}.footer{margin-top:30px;font-size:11px;color:#6f6257;border-top:1px solid #ddd;padding-top:14px}@media print{body{background:#fff}.page{padding:20px}button{display:none}}@media(max-width:650px){.page{padding:22px}.head,.grid{display:block}.title{text-align:left;margin-top:20px}.total{width:100%}}</style></head><body><main class="page">';
+        $html.='<section class="head"><div><div class="brand">PALMA ROTAN</div><div class="company">'.esc_html($company_address).'<br>Phone: '.esc_html($company_phone).' · Email: '.esc_html($company_email).'</div></div><div class="title"><h1>'.esc_html($title).'</h1><p>'.esc_html($number).' · Order #'.esc_html($order->get_order_number()).'</p></div></section>';
+        $html.='<section class="grid"><div class="box"><h3>BILL TO</h3><p>'.esc_html($order->get_formatted_billing_full_name()).'<br>'.esc_html($order->get_billing_email()).'<br>'.esc_html($order->get_billing_phone()).'<br>'.esc_html($order->get_billing_address_1()).'<br>'.esc_html($order->get_billing_city()).' '.esc_html($order->get_billing_state()).' '.esc_html($order->get_billing_postcode()).'<br>'.esc_html($order->get_billing_country()).'</p></div><div class="box"><h3>SHIPPING INFORMATION</h3><p>Courier: '.esc_html($order->get_shipping_method()).'<br>Country: '.esc_html($order->get_shipping_country()).'<br>Tracking: '.esc_html($order->get_meta('_palma_tracking_number') ?: 'Pending').'</p></div></section>';
+        $html.='<table><tr><th>PRODUCT</th><th>SKU</th><th class="num">QTY</th><th class="num">'.($invoice?'TOTAL':'WEIGHT').'</th></tr>';
+        $gross=0;
+        foreach($order->get_items() as $item){
+            $p=$item->get_product();
+            $qty=(int)$item->get_quantity();
+            $weight=(float)($p?$p->get_weight():0)*$qty;
+            $gross+=$weight;
+            $cell=$invoice?wp_kses_post(wc_price($item->get_total(),['currency'=>$currency])):esc_html(number_format($weight,2).' kg');
+            $html.='<tr><td>'.esc_html($item->get_name()).'</td><td>'.esc_html($p?$p->get_sku():'').'</td><td class="num">'.$qty.'</td><td class="num">'.$cell.'</td></tr>';
+        }
         $html.='</table>';
-        if($invoice)$html.='<p class="total">TOTAL: '.wp_kses_post($order->get_formatted_order_total()).'</p>';
-        $html.='<p class="muted">Shipping: '.esc_html($order->get_shipping_method()).'</p><p><button onclick="window.print()">Print / Save PDF</button></p></body></html>';
+        $html.='<div class="shipping"><b>Package Weight</b> Gross Weight: '.esc_html(number_format($gross,2)).' kg · Net Weight: '.esc_html(number_format(max(0,$gross*0.9),2)).' kg</div>';
+        $barcodeData=$order->get_order_number().'|'.$number.'|'.$order->get_order_key();
+        $html.='<div class="barcode">'.esc_html($barcodeData).'</div><div class="meta">Order authentication barcode data — use this value for the final barcode label integration.</div>';
+        if($invoice){$html.='<div class="total"><div><span>Subtotal</span><span>'.wp_kses_post(wc_price($order->get_subtotal(),['currency'=>$currency])).'</span></div><div><span>Shipping</span><span>'.wp_kses_post(wc_price($order->get_shipping_total(),['currency'=>$currency])).'</span></div><div class="grand"><span>TOTAL</span><span>'.wp_kses_post($order->get_formatted_order_total()).'</span></div></div>';}
+        $html.='<div class="footer">PALMA ROTAN · Handcrafted in Indonesia · Print / Save PDF from your browser.</div><p><button onclick="window.print()">Print / Save PDF</button></p></main></body></html>';
         return $html;
     }
 
