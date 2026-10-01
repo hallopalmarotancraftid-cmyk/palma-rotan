@@ -776,9 +776,10 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
   };
   const logoImage = pdfLogoImage();
   let qrMatrix=null;
-  if(type==="invoice"){
-    try{qrMatrix=await qrPngMatrix(String(order.tracking_link||trackingUrl(order,{PUBLIC_SITE_URL:"https://palma-rotan.pages.dev"})));}
-    catch(error){console.error("INVOICE_QR_ERROR",{orderId:order.id,message:error?.message||String(error)});}
+  if(type==="invoice" || type==="packing"){
+    try{
+      qrMatrix=await qrPngMatrix(String(order.document_verification_url||""));
+    }catch(error){console.error("DOCUMENT_QR_ERROR",{orderId:order.id,type,message:error?.message||String(error)});}
   }
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
     rect(x,y,w,h,false);
@@ -988,7 +989,7 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
         }
       }
       commands.push("Q");
-      text(qrX,qrY-12,"ORDER AUTHENTICATION QR",6.5,"F2",muted);
+      text(qrX,qrY-12,type==="invoice"?"INVOICE AUTHENTICATION QR":"PACKING AUTHENTICATION QR",6.0,"F2",muted);
       text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
     }
   }
@@ -1131,6 +1132,48 @@ async function loadPdfOrderItems(env, order) {
 }
 __name(loadPdfOrderItems, "loadPdfOrderItems");
 
+async function ensureDocumentAuthSchema(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS document_authentications (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    document_type TEXT NOT NULL CHECK(document_type IN ('invoice','packing')),
+    token_hash TEXT NOT NULL UNIQUE,
+    token TEXT NOT NULL UNIQUE,
+    verification_url TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT,
+    verified_at TEXT,
+    UNIQUE(order_id, document_type)
+  )`).run();
+}
+function documentVerificationBase(env){
+  return String(env.PUBLIC_SITE_URL||"https://palma-rotan.pages.dev").replace(/\/$/,"");
+}
+async function ensureDocumentAuthentication(orderId,type,env){
+  if(!["invoice","packing"].includes(String(type))) throw new Error("Jenis dokumen tidak valid");
+  await ensureDocumentAuthSchema(env);
+  const existing=await env.DB.prepare("SELECT * FROM document_authentications WHERE order_id=? AND document_type=?").bind(orderId,type).first();
+  if(existing) return existing;
+  const token=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"");
+  const tokenHash=await sha256(token);
+  const verificationUrl=documentVerificationBase(env)+"/verify-document/"+encodeURIComponent(type)+"/"+encodeURIComponent(token);
+  const row={id:id("docauth"),order_id:orderId,document_type:type,token_hash:tokenHash,token,verification_url:verificationUrl};
+  await env.DB.prepare("INSERT INTO document_authentications(id,order_id,document_type,token_hash,token,verification_url) VALUES(?,?,?,?,?,?)")
+    .bind(row.id,row.order_id,row.document_type,row.token_hash,row.token,row.verification_url).run();
+  return row;
+}
+async function publicDocumentVerification(request,env,type,token){
+  if(!["invoice","packing"].includes(String(type))) return new Response("Dokumen tidak valid",{status:404});
+  await ensureDocumentAuthSchema(env);
+  const tokenHash=await sha256(String(token||""));
+  const auth=await env.DB.prepare("SELECT da.*,o.order_number,o.created_at,o.payment_status,o.order_status,i.invoice_number,pk.packing_number,pk.tracking_number,pk.courier FROM document_authentications da JOIN orders o ON o.id=da.order_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE da.document_type=? AND da.token_hash=? LIMIT 1").bind(type,tokenHash).first();
+  if(!auth) return new Response("<!doctype html><meta charset='utf-8'><title>PALMA ROTAN — Verification</title><h1>Dokumen tidak valid</h1><p>Authentication token tidak ditemukan.</p>",{status:404,headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});
+  await env.DB.prepare("UPDATE document_authentications SET verified_at=CURRENT_TIMESTAMP WHERE id=?").bind(auth.id).run();
+  const number=type==="invoice"?(auth.invoice_number||"-"):(auth.packing_number||"-");
+  const html="<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>PALMA ROTAN — Document Verification</title><style>body{margin:0;background:#f5eee4;color:#211a15;font-family:Arial,sans-serif}.wrap{max-width:680px;margin:40px auto;padding:20px}.card{background:#fff;border:1px solid #dccbb6;border-radius:16px;padding:28px}dt{color:#6d6258;font-size:12px;margin-top:14px}dd{margin:4px 0;font-weight:700}</style></head><body><div class='wrap'><div class='card'><div>PALMA ROTAN</div><h1>Document Verified</h1><p>Dokumen "+(type==="invoice"?"Invoice":"Packing List")+" terdaftar pada sistem PALMA ROTAN.</p><dl><dt>Document Number</dt><dd>"+escEmail(number)+"</dd><dt>Order Number</dt><dd>"+escEmail(auth.order_number||"-")+"</dd><dt>Payment Status</dt><dd>"+escEmail(auth.payment_status||"-")+"</dd><dt>Order Status</dt><dd>"+escEmail(auth.order_status||"-")+"</dd><dt>Courier</dt><dd>"+escEmail(auth.courier||"-")+"</dd><dt>Tracking Number</dt><dd>"+escEmail(auth.tracking_number||"-")+"</dd></dl></div></div></body></html>";
+  return new Response(html,{status:200,headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});
+}
+
 function base64Url(value){return btoa(value)}
 function base64UrlDecode(value){return atob(String(value||""))}
 async function createDocumentAccessToken(env,type,ref){
@@ -1187,6 +1230,11 @@ async function documentPdf(request, env, type, orderId) {
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
   order.tracking_link=trackingUrl(order,env);
+  if(type==="invoice" || type==="packing"){
+    const docAuth=await ensureDocumentAuthentication(order.id,type,env);
+    order.document_auth_token=docAuth.token;
+    order.document_verification_url=docAuth.verification_url;
+  }
   const items = await loadPdfOrderItems(env, order);
   const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
   const branding = Object.fromEntries((brandRows.results || []).map((row) => {
@@ -1274,6 +1322,8 @@ var index_default = {
     if (url.pathname === "/api/admin/shipping" && request.method === "POST") return adminShipping(request, env);
     const trackMatch = url.pathname.match(/^\/track\/([^/]+)\/([^/]+)$/);
     if (trackMatch && request.method === "GET") return publicTracking(request, env, decodeURIComponent(trackMatch[1]), decodeURIComponent(trackMatch[2]));
+    const verifyMatch = url.pathname.match(/^\/verify-document\/(invoice|packing)\/([^/]+)$/);
+    if (verifyMatch && request.method === "GET") return publicDocumentVerification(request, env, decodeURIComponent(verifyMatch[1]), decodeURIComponent(verifyMatch[2]));
     if (url.pathname === "/api/admin/products" && ["GET", "POST", "PUT", "PATCH"].includes(request.method)) return adminProducts(request, env);
     if (url.pathname === "/api/payment/webhook" && request.method === "POST") return paymentWebhook(request, env);
     if (url.pathname === "/api/admin/payments/verify" && request.method === "POST") return adminVerifyPayment(request, env);
