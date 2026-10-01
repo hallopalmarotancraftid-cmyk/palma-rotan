@@ -721,7 +721,8 @@ function pdfLogoImage() {
   for(let y=0;y<height;y++){
     rawRgb.set(rgb.subarray(y*rgbRowSize+1,(y+1)*rgbRowSize),y*width*3);
   }
-  return {width,height,rgb:deflateSync(rawRgb)};\n}
+  return {width,height,rgb:deflateSync(rawRgb)};
+}
 
 async function qrPngMatrix(value) {
   const data=String(value||"").trim();
