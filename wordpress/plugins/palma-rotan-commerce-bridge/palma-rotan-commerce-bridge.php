@@ -243,8 +243,20 @@ final class Palma_Rotan_Commerce_Bridge {
         if (!$order) return;
         // Documents are rendered dynamically through the protected REST endpoint.
         // Do not write public HTML files into wp-content/uploads.
-        update_post_meta($order->get_id(),'_palma_invoice_number','INV-PR-'.gmdate('Y').'-'.str_pad((string)$order->get_id(),8,'0',STR_PAD_LEFT));
-        update_post_meta($order->get_id(),'_palma_packing_number','PK-PR-'.gmdate('Y').'-'.str_pad((string)$order->get_id(),8,'0',STR_PAD_LEFT));
+        // Numbers are idempotent: repeated WooCommerce paid/status hooks must not
+        // generate a different invoice or packing number for the same order.
+        $id = (string) $order->get_id();
+        $invoice = (string) get_post_meta($order->get_id(), '_palma_invoice_number', true);
+        $packing = (string) get_post_meta($order->get_id(), '_palma_packing_number', true);
+        $year = gmdate('Y');
+        if ($invoice === '') {
+            $invoice = 'INV-PR-'.$year.'-'.str_pad($id, 8, '0', STR_PAD_LEFT);
+            update_post_meta($order->get_id(), '_palma_invoice_number', $invoice);
+        }
+        if ($packing === '') {
+            $packing = 'PK-PR-'.$year.'-'.str_pad($id, 8, '0', STR_PAD_LEFT);
+            update_post_meta($order->get_id(), '_palma_packing_number', $packing);
+        }
     }
 
     private static function document_html($order,$type) {
