@@ -890,14 +890,6 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     text(M,205,"Payment Method",8,"F2",muted);
     text(M,189,"Midtrans / Payment Gateway",8.5,"F1");
 
-    // Invoice authentication barcode. The barcode carries the order number
-    // together with the unique packing auth code so the invoice can be
-    // validated against the public tracking/authentication flow.
-    const authValue = order.order_number && order.auth_code
-      ? String(order.order_number) + "|" + String(order.auth_code)
-      : String(order.order_number || "");
-    barcodeSlot(M,96,W-2*M,70,"ORDER AUTHENTICATION BARCODE",authValue,String(order.order_number||""));
-    text(M,82,"Scan to authenticate this invoice/order",7.2,"F1",muted);
   }
 
   // Packing List: barcode row is placed directly above the weight/shipping
@@ -915,12 +907,12 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
     // Invoice has one clean authentication barcode only. Keep it above the
     // footer and below the payment method so it cannot collide with other
     // barcode blocks.
-    const invoiceBarcodeY=122;
-    barcodeSlot(M,invoiceBarcodeY,W-2*M,58,"ORDER AUTHENTICATION BARCODE",
+    const invoiceBarcodeY=126;
+    barcodeSlot(M,invoiceBarcodeY,W-2*M,52,"ORDER AUTHENTICATION BARCODE",
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
         : String(order.order_number||""),String(order.order_number||""));
-    text(M,invoiceBarcodeY-15,"Scan to authenticate this invoice/order",7.2,"F1",muted);
+    text(M,invoiceBarcodeY-14,"Scan to authenticate this invoice/order",6.8,"F1",muted);
   }
   // Footer.
   line(M,24,W-M,24,0.8,tan);
