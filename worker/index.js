@@ -974,8 +974,10 @@ function makeProfessionalPdf(type, order, items, branding = {}) {
       order.order_number&&order.auth_code
         ? String(order.order_number)+"|"+String(order.auth_code)
         : String(order.order_number||""),String(order.order_number||""));
-  } else if(type==="invoice"){
-    // Invoice has one clean authentication barcode only. Keep it above the
+  } else if(type==="invoice" || type==="packing"){
+    // Each production document gets its own verification QR. Keep it separated
+    // from barcode blocks and the footer.
+    // Invoice has one clean authentication QR only. Keep it above the
     // footer and below the payment method so it cannot collide with other
     // barcode blocks.
     if(qrMatrix){
