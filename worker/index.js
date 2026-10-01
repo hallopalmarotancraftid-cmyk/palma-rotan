@@ -233,14 +233,100 @@ function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&
 __name(generatedTrackingNumber,"generatedTrackingNumber");
 function carrierTrackingUrl(carrier,tracking){const t=String(tracking||"").trim();if(carrier==="J&T")return "https://www.jet.co.id/track"+(t?"?bills="+encodeURIComponent(t):"");return "https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(t)}
 __name(carrierTrackingUrl,"carrierTrackingUrl");
+async function ensureOrderFoundationSchema(env) {
+  const defs = [
+    ["customer_snapshot_json","TEXT"],
+    ["idempotency_key","TEXT"],
+    ["idempotency_hash","TEXT"]
+  ];
+  const orderInfo = await env.DB.prepare("PRAGMA table_info(orders)").all();
+  const orderCols = new Set((orderInfo.results || []).map(x => x.name));
+  for (const [col,type] of defs) {
+    if (orderCols.has(col)) continue;
+    try { await env.DB.prepare("ALTER TABLE orders ADD COLUMN " + col + " " + type).run(); }
+    catch (err) { if (!/duplicate column name/i.test(String(err?.message || err))) throw err; }
+  }
+  const itemDefs = [
+    ["sku","TEXT"],["subtotal","REAL"],["weight_grams","REAL"],
+    ["length_cm","REAL"],["width_cm","REAL"],["height_cm","REAL"]
+  ];
+  const itemInfo = await env.DB.prepare("PRAGMA table_info(order_items)").all();
+  const itemCols = new Set((itemInfo.results || []).map(x => x.name));
+  for (const [col,type] of itemDefs) {
+    if (itemCols.has(col)) continue;
+    try { await env.DB.prepare("ALTER TABLE order_items ADD COLUMN " + col + " " + type).run(); }
+    catch (err) { if (!/duplicate column name/i.test(String(err?.message || err))) throw err; }
+  }
+  const histInfo = await env.DB.prepare("PRAGMA table_info(order_status_history)").all();
+  const histCols = new Set((histInfo.results || []).map(x => x.name));
+  for (const [col,type] of [["status_type","TEXT"],["actor","TEXT"]]) {
+    if (histCols.has(col)) continue;
+    try { await env.DB.prepare("ALTER TABLE order_status_history ADD COLUMN " + col + " " + type).run(); }
+    catch (err) { if (!/duplicate column name/i.test(String(err?.message || err))) throw err; }
+  }
+  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> ''").run();
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id)").run();
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_order_status_history_order_id ON order_status_history(order_id)").run();
+  return true;
+}
+__name(ensureOrderFoundationSchema,"ensureOrderFoundationSchema");
+
+function parseProductDimensions(value) {
+  const nums = String(value || "").match(/-?\\d+(?:[.,]\\d+)?/g)?.map(x => Number(String(x).replace(",", "."))) || [];
+  return { length_cm: nums[0] || 20, width_cm: nums[1] || 23, height_cm: nums[2] || 23 };
+}
+__name(parseProductDimensions,"parseProductDimensions");
+
 async function createOrder(request, env) {
+  await ensureOrderFoundationSchema(env);
   const body = await request.json();
   if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Keranjang kosong" }, 400, cors(request));
   const currency = body.currency === "IDR" ? "IDR" : "USD";
   const ids = body.items.map((x) => x.productId);
   if (ids.some((x) => !x)) return json({ error: "Product ID tidak valid" }, 400, cors(request));
+
+  const requestedIdempotency = String(
+    request.headers.get("Idempotency-Key") || body.idempotencyKey || ""
+  ).trim().slice(0, 200);
+
+  const canonicalInput = JSON.stringify({
+    items: body.items.map(x => ({ productId: String(x.productId), quantity: Number(x.quantity) })),
+    currency,
+    customer: body.customer || {},
+    shippingAddress: body.shippingAddress || {},
+    shippingMethod: body.shippingMethod || "",
+    shippingAmount: Number(body.shippingAmount) || 0,
+    paymentGateway: body.paymentGateway || body.paymentMethod || ""
+  });
+  const idempotencyHash = await sha256(canonicalInput);
+
+  if (requestedIdempotency) {
+    const existing = await env.DB.prepare("SELECT * FROM orders WHERE idempotency_key=? LIMIT 1").bind(requestedIdempotency).first();
+    if (existing) {
+      if (existing.idempotency_hash && existing.idempotency_hash !== idempotencyHash) {
+        return json({ error: "Idempotency-Key sudah digunakan untuk data checkout yang berbeda" }, 409, cors(request));
+      }
+      return json({
+        orderId: existing.id,
+        orderNumber: existing.order_number,
+        currency: existing.original_currency,
+        subtotal: existing.original_amount,
+        shippingAmount: existing.shipping_amount,
+        total: existing.total_amount,
+        adminTotalIdr: existing.admin_total_idr,
+        paymentUrl: existing.payment_url || null,
+        paymentStatus: existing.payment_status || "PENDING",
+        idempotentReplay: true
+      }, 200, cors(request));
+    }
+  }
+
   const placeholders = ids.map(() => "?").join(",");
-  const result = await env.DB.prepare(`SELECT p.id,p.stock,p.type,p.moq,pt.name,pp.amount FROM products p JOIN product_translations pt ON pt.product_id=p.id AND pt.language=? JOIN product_prices pp ON pp.product_id=p.id AND pp.currency=? WHERE p.id IN (${placeholders}) AND p.active=1`).bind(currency === "IDR" ? "id" : "en", currency, ...ids).all();
+  const result = await env.DB.prepare(`SELECT p.id,p.stock,p.type,p.moq,p.sku,p.weight_kg,p.dimensions_cm,pt.name,pp.amount
+    FROM products p
+    JOIN product_translations pt ON pt.product_id=p.id AND pt.language=?
+    JOIN product_prices pp ON pp.product_id=p.id AND pp.currency=?
+    WHERE p.id IN (${placeholders}) AND p.active=1`).bind(currency === "IDR" ? "id" : "en", currency, ...ids).all();
   const byId = new Map((result.results || []).map((x) => [x.id, x]));
   let subtotal = 0;
   const items = [];
@@ -252,11 +338,21 @@ async function createOrder(request, env) {
     const unitPrice = Number(p.amount);
     if (!Number.isFinite(unitPrice) || unitPrice < 0) return json({ error: `Harga produk ${p.name} tidak valid` }, 500, cors(request));
     const lineTotal = unitPrice * qty;
+    const dimensions = parseProductDimensions(p.dimensions_cm);
+    const weightKg = Number(p.weight_kg);
+    const weightGrams = Number.isFinite(weightKg) && weightKg > 0 ? weightKg * 1000 : 500;
     subtotal += lineTotal;
-    items.push({ p, qty, total: lineTotal });
+    items.push({
+      p, qty, total: lineTotal, sku: p.sku || p.id,
+      weight_grams: weightGrams,
+      length_cm: dimensions.length_cm,
+      width_cm: dimensions.width_cm,
+      height_cm: dimensions.height_cm
+    });
   }
-  const country=String(body.shippingAddress?.country||body.customer?.country||"").trim();
-  const shippingCarrier=shippingCarrierForCountry(country);
+
+  const country = String(body.shippingAddress?.country || body.customer?.country || "").trim();
+  const shippingCarrier = shippingCarrierForCountry(country);
   const shipping = Math.max(0, Number(body.shippingAmount) || 0);
   const orderId = id("ord");
   const orderNumber = `PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -271,49 +367,57 @@ async function createOrder(request, env) {
     customerId = id("cus");
     isNewCustomer = true;
   }
+
   const setting = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key='usdToIdrRate'`).first();
   const rate = parseSettingNumber(setting?.value_json, 16000);
   const total = subtotal + shipping;
   const adminTotalIdr = Math.round(currency === "USD" ? total * rate : total);
   if (!Number.isFinite(adminTotalIdr) || adminTotalIdr <= 0) return json({ error: "Total order tidak valid" }, 500, cors(request));
 
+  const customerSnapshot = JSON.stringify({
+    firstName: body.customer?.firstName || "",
+    lastName: body.customer?.lastName || "",
+    email: customerEmail || "",
+    phone: body.customer?.phone || "",
+    country: body.customer?.country || "",
+    shippingAddress: body.shippingAddress || {},
+    billingAddress: body.billingAddress || {}
+  });
+
   const statements = [];
   if (isNewCustomer) {
-    statements.push(
-      env.DB.prepare(`INSERT INTO customers(id,email,first_name,last_name,phone,country) VALUES(?,?,?,?,?,?)`).bind(
-        customerId, customerEmail, body.customer?.firstName || "", body.customer?.lastName || "",
-        body.customer?.phone || "", body.customer?.country || ""
-      )
-    );
+    statements.push(env.DB.prepare(`INSERT INTO customers(id,email,first_name,last_name,phone,country) VALUES(?,?,?,?,?,?)`).bind(
+      customerId, customerEmail, body.customer?.firstName || "", body.customer?.lastName || "",
+      body.customer?.phone || "", body.customer?.country || ""
+    ));
   } else {
-    statements.push(
-      env.DB.prepare(`UPDATE customers SET first_name=?,last_name=?,phone=?,country=? WHERE id=?`).bind(
-        body.customer?.firstName || "", body.customer?.lastName || "",
-        body.customer?.phone || "", body.customer?.country || "", customerId
-      )
-    );
+    statements.push(env.DB.prepare(`UPDATE customers SET first_name=?,last_name=?,phone=?,country=? WHERE id=?`).bind(
+      body.customer?.firstName || "", body.customer?.lastName || "",
+      body.customer?.phone || "", body.customer?.country || "", customerId
+    ));
   }
+
   statements.push(
-    env.DB.prepare(`INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_address_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(
+    env.DB.prepare(`INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_address_json,customer_snapshot_json,idempotency_key,idempotency_hash)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
       orderId, orderNumber, customerId, currency, subtotal, shipping, total, rate, adminTotalIdr,
-      body.shippingMethod || "", JSON.stringify(body.shippingAddress || {})
+      body.shippingMethod || shippingCarrier || "", JSON.stringify(body.shippingAddress || {}),
+      customerSnapshot, requestedIdempotency || null, requestedIdempotency ? idempotencyHash : null
     ),
-    ...items.map((i) => env.DB.prepare(`INSERT INTO order_items(id,order_id,product_id,product_name,quantity,unit_price,currency,total_price) VALUES(?,?,?,?,?,?,?,?)`).bind(
-      id("item"), orderId, i.p.id, i.p.name, i.qty, i.p.amount, currency, i.total
+    ...items.map((i) => env.DB.prepare(`INSERT INTO order_items(id,order_id,product_id,product_name,quantity,unit_price,currency,total_price,sku,subtotal,weight_grams,length_cm,width_cm,height_cm)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+      id("item"), orderId, i.p.id, i.p.name, i.qty, i.p.amount, currency, i.total,
+      i.sku, i.total, i.weight_grams * i.qty, i.length_cm, i.width_cm, i.height_cm
     )),
-    env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(
-      id("hist"), orderId, "NEW", "Order dibuat melalui checkout"
+    env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note,status_type,actor) VALUES(?,?,?,?,?,?)`).bind(
+      id("hist"), orderId, "NEW", "Order dibuat melalui checkout", "ORDER", "customer"
     )
   );
+
   await env.DB.batch(statements);
   const persistedItemCount = Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM order_items WHERE order_id=?").bind(orderId).first())?.n || 0);
   if (persistedItemCount !== items.length) {
-    console.error("ORDER_ITEMS_PERSISTENCE_MISMATCH", {
-      orderId,
-      orderNumber,
-      expected: items.length,
-      persisted: persistedItemCount
-    });
+    console.error("ORDER_ITEMS_PERSISTENCE_MISMATCH", { orderId, orderNumber, expected: items.length, persisted: persistedItemCount });
     return json({ error: "Data item pesanan gagal disimpan dengan lengkap", orderId, orderNumber }, 500, cors(request));
   }
 
@@ -321,28 +425,12 @@ async function createOrder(request, env) {
   const useMidtrans = ["gateway", "midtrans", "snap", "payment gateway"].includes(requestedGateway);
   if (useMidtrans) {
     try {
-      const snap = await createMidtransSnap(
-        { order_number: orderNumber, admin_total_idr: adminTotalIdr },
-        body.customer || {},
-        env
-      );
+      const snap = await createMidtransSnap({ order_number: orderNumber, admin_total_idr: adminTotalIdr }, body.customer || {}, env);
       await env.DB.prepare(`UPDATE orders SET payment_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(snap.redirect_url, orderId).run();
-      return json({
-        orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr,
-        paymentUrl: snap.redirect_url, paymentToken: snap.token
-      }, 201, cors(request));
+      return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr, paymentUrl: snap.redirect_url, paymentToken: snap.token }, 201, cors(request));
     } catch (error) {
-      console.error("MIDTRANS_CREATE_ERROR", {
-        code: error?.code || "UNKNOWN",
-        message: error?.message || String(error),
-        providerStatus: error?.providerStatus || null,
-        providerBody: error?.providerBody || null,
-        orderId, orderNumber
-      });
-      return json({
-        error: error?.message || "Gagal membuat halaman pembayaran Midtrans",
-        orderId, orderNumber, paymentStatus: "PENDING"
-      }, 502, cors(request));
+      console.error("MIDTRANS_CREATE_ERROR", { code: error?.code || "UNKNOWN", message: error?.message || String(error), providerStatus: error?.providerStatus || null, providerBody: error?.providerBody || null, orderId, orderNumber });
+      return json({ error: error?.message || "Gagal membuat halaman pembayaran Midtrans", orderId, orderNumber, paymentStatus: "PENDING" }, 502, cors(request));
     }
   }
   return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, total, adminTotalIdr }, 201, cors(request));
