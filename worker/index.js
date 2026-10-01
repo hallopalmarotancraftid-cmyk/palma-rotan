@@ -701,7 +701,22 @@ function pdfLogoImage() {
     for(let x=0;x<width;x++){const i=x*4;rgb[ro++]=row[i];rgb[ro++]=row[i+1];rgb[ro++]=row[i+2];alpha[ao++]=row[i+3];}
     prev=row;
   }
-  return {width,height,rgb:deflateSync(rgb),alpha:deflateSync(alpha)};
+  // Flatten the RGBA logo onto the PDF paper color. A direct /SMask
+  // can make otherwise-valid PDFs render blank in some PDF viewers, so keep
+  // the production logo as a single opaque RGB image instead.
+  const bgR=246,bgG=242,bgB=233;
+  for(let y=0;y<height;y++){
+    const rowBase=y*rgbRowSize;
+    const alphaBase=y*alphaRowSize;
+    for(let x=0;x<width;x++){
+      const a=alpha[alphaBase+1+x];
+      const inv=255-a;
+      rgb[rowBase+1+x*3]=Math.round((rgb[rowBase+1+x*3]*a+bgR*inv)/255);
+      rgb[rowBase+2+x*3]=Math.round((rgb[rowBase+2+x*3]*a+bgG*inv)/255);
+      rgb[rowBase+3+x*3]=Math.round((rgb[rowBase+3+x*3]*a+bgB*inv)/255);
+    }
+  }
+  return {width,height,rgb:deflateSync(rgb)};
 }
 
 async function qrPngMatrix(value) {
@@ -1049,12 +1064,11 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
-  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /SMask 9 0 R /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
-  addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.alpha.length} >>\nstream\n`,data:logoImage.alpha,tail:"\nendstream"});
+  addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
   const xref=total;
-  addText("xref\n0 10\n0000000000 65535 f \n");
-  for(let i=1;i<=9;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
-  addText(`trailer\n<< /Size 10 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  addText("xref\n0 9\n0000000000 65535 f \n");
+  for(let i=1;i<=8;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
+  addText(`trailer\n<< /Size 9 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
