@@ -18,11 +18,15 @@ async function showProductionPdfUrl(url,filename){
   modal.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;color:#fff"><strong style="font-size:15px">'+html(filename)+'</strong><div style="display:flex;gap:8px"><a id="pdfDownloadBtn" class="btn" style="background:#fff;color:#211a15;text-decoration:none" href="#" download="'+html(filename)+'">Download</a><button id="pdfNewTabBtn" class="btn" style="background:#fff;color:#211a15">Tab Baru</button><button id="pdfCloseBtn" class="btn" style="background:#211a15;color:#fff">Tutup</button></div></div><div id="pdfLoading" style="flex:1;display:flex;align-items:center;justify-content:center;color:#fff;background:#fff;border-radius:8px">Memuat dokumen production…</div>';
   document.body.appendChild(modal);
   try{
-    const r=await fetch(url,{cache:'no-store',credentials:'omit'});
+    const r=await fetch(url,{cache:'no-store',credentials:'omit',headers:{accept:'application/pdf'}});
     const ct=(r.headers.get('content-type')||'').toLowerCase();
     if(!r.ok)throw new Error('Dokumen API HTTP '+r.status);
-    if(!ct.includes('application/pdf'))throw new Error('Server tidak mengembalikan PDF');
+    if(!ct.includes('application/pdf')){
+      const probe=(await r.text()).slice(0,120).replace(/\s+/g,' ');
+      throw new Error('Server tidak mengembalikan PDF (Content-Type: '+(ct||'unknown')+'). Respons: '+probe);
+    }
     const blob=await r.blob();
+    if(blob.size<1000)throw new Error('PDF production terlalu kecil atau tidak valid ('+blob.size+' byte)');
     const objectUrl=URL.createObjectURL(blob);
     modal.dataset.objectUrl=objectUrl;
     modal.querySelector('#pdfDownloadBtn').href=objectUrl;
@@ -51,8 +55,11 @@ async function openProductionDocument(type,id){
   if(!token){alert('Sesi admin sudah berakhir. Silakan login kembali.');return}
   try{
     const access=await apiFetch('/api/admin/documents/access',{method:'POST',body:JSON.stringify({type,ref})});
-    if(!access?.url)throw new Error('Tautan dokumen production tidak tersedia');
-    showProductionPdfUrl(access.url,(type==='invoice'?'invoice-':type==='packing'?'packing-':'label-')+String(o?.orderNumber||id)+'.pdf');
+    if(!access?.path||!access?.access_token)throw new Error('Tautan dokumen production tidak lengkap');
+    const base=String(window.PALMA_API_BASE||'').replace(/\/+$/,'');
+    if(!base)throw new Error('PALMA_API_BASE belum dikonfigurasi');
+    const documentUrl=base+access.path+'?access_token='+encodeURIComponent(access.access_token);
+    showProductionPdfUrl(documentUrl,(type==='invoice'?'invoice-':type==='packing'?'packing-':'label-')+String(o?.orderNumber||id)+'.pdf');
   }catch(e){
     alert('Gagal membuka dokumen production: '+(e.message||e));
   }
