@@ -955,13 +955,16 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
   addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
   addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> /Contents 7 0 R >>`);
+  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R${qrImage ? " /QR 10 0 R" : ""} >> /Contents 7 0 R >>`);
   addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
   addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${logoImage.width} >> /SMask 9 0 R /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
   addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns ${logoImage.width} >> /Length ${logoImage.alpha.length} >>\nstream\n`,data:logoImage.alpha,tail:"\nendstream"});
+  if(qrImage){
+    addObj(10,{head:`<< /Type /XObject /Subtype /Image /Width ${qrImage.width} /Height ${qrImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns ${qrImage.width} >> /Length ${qrImage.rgb.length} >>\nstream\n`,data:qrImage.rgb,tail:"\nendstream"});
+  }
   const xref=total;
   addText("xref\n0 10\n0000000000 65535 f \n");
   for(let i=1;i<=9;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
