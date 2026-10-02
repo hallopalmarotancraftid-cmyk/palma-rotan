@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.13
+ * Version: 1.0.14
  * Requires Plugins: woocommerce
  */
 
@@ -616,7 +616,8 @@ final class Palma_Rotan_Commerce_Bridge {
         $type=$request['type'];
         $pdf=self::build_pdf($order,$type);
         $number=(string)($type==='invoice'?get_post_meta($order->get_id(),'_palma_invoice_number',true):get_post_meta($order->get_id(),'_palma_packing_number',true));
-        $name=sanitize_file_name(($type==='invoice'?'PALMA-ROTAN-Invoice-':'PALMA-ROTAN-Packing-').$number.'.pdf');
+        $prefix=$type==='invoice'?'PALMA-ROTAN-Invoice-':($type==='packing'?'PALMA-ROTAN-Packing-':'PALMA-ROTAN-Shipping-Label-');
+        $name=sanitize_file_name($prefix.$number.'.pdf');
         $response=new WP_REST_Response($pdf,200);
         $response->header('Content-Type','application/pdf');
         $response->header('Content-Disposition','attachment; filename="'.$name.'"');
@@ -680,7 +681,8 @@ final class Palma_Rotan_Commerce_Bridge {
             $carrier=(string)$o->get_meta('_palma_shipping_carrier');
             $trackUrl=(string)$o->get_meta('_palma_tracking_url');
             $saveUrl=wp_nonce_url(admin_url('admin-post.php?action=palma_save_tracking&order_id='.$o->get_id()),'palma_save_tracking_'.$o->get_id());
-            echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.esc_html($carrier?:'—').'</td><td><form method="post" action="'.esc_url($saveUrl).'"><input type="text" name="tracking_number" value="'.esc_attr($tracking).'" placeholder="Nomor resi" style="width:150px"><input type="url" name="tracking_url" value="'.esc_attr($trackUrl).'" placeholder="URL tracking" style="width:180px"><button class="button button-small">Save</button></form></td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a>':'').'</td></tr>';
+            $label=$o->is_paid() && $tracking!=='' ? esc_url(rest_url(self::REST_NS.'/document-pdf/label/'.$o->get_id()).'?key='.$key) : '';
+            echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.esc_html($carrier?:'—').'</td><td><form method="post" action="'.esc_url($saveUrl).'"><input type="text" name="tracking_number" value="'.esc_attr($tracking).'" placeholder="Nomor resi" style="width:150px"><input type="url" name="tracking_url" value="'.esc_attr($trackUrl).'" placeholder="URL tracking (opsional untuk J&T)" style="width:180px"><button class="button button-small">Save</button></form></td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a> ':'').($label?'<a target="_blank" href="'.$label.'">Label</a>':'').'</td></tr>';
         }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
