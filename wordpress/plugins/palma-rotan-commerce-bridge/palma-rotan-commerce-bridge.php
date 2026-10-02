@@ -179,7 +179,9 @@ final class Palma_Rotan_Commerce_Bridge {
             if(!$product||!$product->is_purchasable())return self::error('Produk tidak tersedia.',400);
             $priceIdr=(float)get_post_meta($product->get_id(),'_palma_price_idr',true);
             $base=(float)$product->get_regular_price();
-            $value=$priceIdr>0?$priceIdr:$base*$rate;
+            // WooCommerce Regular Price is already PALMA's IDR price.
+            // Never multiply the IDR product price by the USD/IDR rate for shipping quotes.
+            $value=$priceIdr>0?$priceIdr:$base;
             $prepared[]=[
                 'name'=>(string)$product->get_name(),
                 'description'=>'PALMA ROTAN rattan craft',
