@@ -70,14 +70,18 @@ final class Palma_Rotan_Commerce_Bridge {
     public static function products() {
         if (!class_exists('WooCommerce')) return self::error('WooCommerce belum aktif.', 503);
         $products = wc_get_products(['status'=>'publish','limit'=>-1,'orderby'=>'date','order'=>'DESC']);
+        $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
         $out = [];
         foreach ($products as $p) {
+            $price_usd = (float) $p->get_regular_price();
+            $stored_idr = (float) get_post_meta($p->get_id(), '_palma_price_idr', true);
+            $price_idr = $stored_idr > 0 ? $stored_idr : ($price_usd > 0 ? $price_usd * $rate : 0);
             $out[] = [
                 'id' => (string) $p->get_id(),
                 'sku' => (string) $p->get_sku(),
                 'name' => $p->get_name(),
-                'price_idr' => (float) get_post_meta($p->get_id(), '_palma_price_idr', true),
-                'price_usd' => (float) $p->get_regular_price(),
+                'price_idr' => $price_idr,
+                'price_usd' => $price_usd,
                 'stock' => $p->managing_stock() ? (int) $p->get_stock_quantity() : null,
                 'weight_kg' => (float) $p->get_weight(),
                 'dimensions_cm' => trim($p->get_length().' × '.$p->get_width().' × '.$p->get_height(), ' ×'),
