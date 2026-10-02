@@ -29,3 +29,5 @@ jobs:
           name: palma-rotan-commerce-bridge
           path: palma-rotan-commerce-bridge-*.zip
           if-no-files-found: error
+
+# Build workflow maintained by PALMA ROTAN
