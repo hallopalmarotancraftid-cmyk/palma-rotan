@@ -1,0 +1,29 @@
+name: Build PALMA ROTAN Commerce Bridge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wordpress/plugins/palma-rotan-commerce-bridge/**'
+      - '.github/workflows/build-commerce-bridge.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate PHP
+        run: php -l wordpress/plugins/palma-rotan-commerce-bridge/palma-rotan-commerce-bridge.php
+      - name: Build plugin ZIP
+        run: |
+          VERSION=$(php -r '$s=file_get_contents("wordpress/plugins/palma-rotan-commerce-bridge/palma-rotan-commerce-bridge.php"); preg_match("/Version:\s*([^\s]+)/",$s,$m); echo $m[1] ?? "unknown";')
+          cd wordpress/plugins
+          zip -qr "../../palma-rotan-commerce-bridge-${VERSION}.zip" palma-rotan-commerce-bridge
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: palma-rotan-commerce-bridge
+          path: palma-rotan-commerce-bridge-*.zip
+          if-no-files-found: error
