@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Requires Plugins: woocommerce
  */
 
@@ -22,6 +22,8 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('admin_post_palma_save_tracking', [__CLASS__, 'save_tracking']);
         add_action('admin_post_palma_sync_order', [__CLASS__, 'manual_sync_order']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
+        add_action('woocommerce_product_options_pricing', [__CLASS__, 'product_usd_field']);
+        add_action('woocommerce_admin_process_product_object', [__CLASS__, 'save_product_usd']);
         add_action('palma_sync_paid_order', [__CLASS__, 'run_scheduled_sync'], 10, 1);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
         add_action('wp_head', [__CLASS__, 'payment_page_styles']);
@@ -309,8 +311,16 @@ final class Palma_Rotan_Commerce_Bridge {
                 $moq = max(1, (int) get_post_meta($product->get_id(), '_palma_moq', true));
                 if ($type === 'custom' && $qty < $moq) throw new Exception('MOQ untuk '.$product->get_name().' adalah '.$moq.'.');
                 $price_idr = (float) get_post_meta($product->get_id(), '_palma_price_idr', true);
-                $base_price = (float) $product->get_regular_price();
-                $unit_idr = $price_idr > 0 ? $price_idr : ($base_price * $rate);
+                $base_idr = (float) $product->get_regular_price();
+                $price_usd = (float) get_post_meta($product->get_id(), '_palma_price_usd', true);
+                if ($currency === 'USD') {
+                    if ($price_usd <= 0) throw new Exception('Harga USD belum diisi untuk '.$product->get_name().'.');
+                    // Midtrans/WooCommerce payment remains IDR; convert only at the
+                    // payment boundary from the independently stored USD price.
+                    $unit_idr = $price_usd * $rate;
+                } else {
+                    $unit_idr = $price_idr > 0 ? $price_idr : $base_idr;
+                }
                 if ($unit_idr <= 0) throw new Exception('Harga produk tidak valid: '.$product->get_name());
                 $line = new WC_Order_Item_Product();
                 $line->set_product($product);
@@ -930,6 +940,29 @@ final class Palma_Rotan_Commerce_Bridge {
         $order->save();
         wp_safe_redirect(admin_url('admin.php?page=palma-orders&tracking_saved=1'));
         exit;
+    }
+
+    public static function product_usd_field() {
+        woocommerce_wp_text_input([
+            'id' => '_palma_price_usd',
+            'label' => 'Harga USD',
+            'desc_tip' => true,
+            'description' => 'Harga USD khusus produk PALMA. Tidak dikonversi otomatis dari harga IDR.',
+            'type' => 'number',
+            'data_type' => 'decimal',
+            'custom_attributes' => ['step' => '0.01', 'min' => '0'],
+            'value' => get_post_meta(get_the_ID(), '_palma_price_usd', true),
+        ]);
+    }
+
+    public static function save_product_usd($product) {
+        if (!isset($_POST['_palma_price_usd'])) return;
+        $value = wc_format_decimal(wp_unslash($_POST['_palma_price_usd']));
+        if ($value === '' || (float) $value <= 0) {
+            $product->delete_meta_data('_palma_price_usd');
+        } else {
+            $product->update_meta_data('_palma_price_usd', (float) $value);
+        }
     }
 
     public static function register_settings() {
