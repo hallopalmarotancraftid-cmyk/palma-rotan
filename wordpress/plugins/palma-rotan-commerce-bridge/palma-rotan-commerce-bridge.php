@@ -270,6 +270,16 @@ final class Palma_Rotan_Commerce_Bridge {
         if (!isset($gateways[$gateway_id])) wp_die('Payment gateway WooCommerce tidak ditemukan.');
         if (!$gateways[$gateway_id]->is_available()) wp_die('Payment gateway WooCommerce tidak tersedia.');
         try {
+            // Midtrans' WooCommerce gateway expects a live WooCommerce cart/session
+            // and calls WC()->cart->empty_cart() during process_payment(). This
+            // endpoint is reached directly by browser navigation, outside the normal
+            // WooCommerce checkout request, so initialize the cart/session first.
+            if (function_exists('wc_load_cart')) {
+                wc_load_cart();
+            }
+            if (!WC()->cart) {
+                wp_die('WooCommerce cart/session gagal diinisialisasi.');
+            }
             $result = $gateways[$gateway_id]->process_payment($order->get_id());
             if (!is_array($result) || ($result['result'] ?? '') !== 'success' || empty($result['redirect'])) wp_die('Payment gateway gagal membuat pembayaran.');
             wp_safe_redirect(esc_url_raw($result['redirect']));
