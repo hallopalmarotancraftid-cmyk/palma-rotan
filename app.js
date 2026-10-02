@@ -201,7 +201,7 @@ async function loadShippingRates(){
       shippingAddress:{country,postalCode:postal}
     })});
     const j=await r.json().catch(()=>({}));
-    if(!r.ok||!j.ok||!Array.isArray(j.options)||!j.options.length)throw new Error(j.error||'Biteship rates unavailable');
+    if(!r.ok||!j.ok||!Array.isArray(j.options)||!j.options.length)throw new Error(j.error||j.message||'Biteship rates unavailable');
     select.innerHTML=j.options.map(o=>'<option value="'+String(o.serviceName).replace(/"/g,'&quot;')+'" data-company="'+String(o.company).replace(/"/g,'&quot;')+'" data-service="'+String(o.serviceCode).replace(/"/g,'&quot;')+'">'+String(o.courierName||o.company)+' · '+String(o.serviceName||o.serviceCode)+' · '+moneyCurrency(Number(o.priceIdr||0)/(rates[data.settings.currency||'USD']||1),data.settings.currency||'USD')+(o.duration?' · '+String(o.duration):'')+'</option>').join('');
     quote.value=j.quoteId||'';
     const apply=()=>{const o=select.options[select.selectedIndex];if(!o)return;if(carrier)carrier.value=o.dataset.company||'';if(service)service.value=o.dataset.service||'';};
