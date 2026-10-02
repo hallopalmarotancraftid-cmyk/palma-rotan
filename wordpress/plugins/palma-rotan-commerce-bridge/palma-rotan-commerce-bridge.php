@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.12
+ * Version: 1.0.13
  * Requires Plugins: woocommerce
  */
 
@@ -712,7 +712,52 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
         return $cmd;
     }
 
+    private static function build_label_pdf($order) {
+        self::ensure_documents($order);
+        $tracking=(string)$order->get_meta('_palma_tracking_number');
+        if($tracking==='') return self::build_pdf($order,'packing');
+        $carrier=(string)$order->get_meta('_palma_shipping_carrier');
+        if($carrier==='') $carrier=strtoupper($order->get_shipping_country())==='ID'?'J&T':'DHL';
+        $trackingUrl=(string)$order->get_meta('_palma_tracking_url');
+        if($trackingUrl==='' && strtoupper($carrier)==='J&T') $trackingUrl='https://www.jet.co.id/track?bills='.rawurlencode($tracking);
+        $name=$order->get_formatted_billing_full_name();
+        $address=$order->get_billing_address_1().', '.$order->get_billing_city().' '.$order->get_billing_state().' '.$order->get_billing_postcode().' '.$order->get_billing_country();
+        $stream="BT /F1 13 Tf 24 402 Td (PALMA ROTAN) Tj 0 -22 Td /F1 10 Tf (SHIPPING LABEL) Tj 0 -28 Td ";
+        $stream.='('.self::pdf_escape('Order #'.$order->get_order_number()).") Tj 0 -24 Td ";
+        $stream.='('.self::pdf_escape('SHIP TO: '.$name).") Tj 0 -18 Td ";
+        $stream.='('.self::pdf_escape($address).") Tj 0 -24 Td ";
+        $stream.='('.self::pdf_escape('COURIER: '.$carrier).") Tj 0 -18 Td ";
+        $stream.='('.self::pdf_escape('RESI / TRACKING: '.$tracking).") Tj ET ";
+        if($trackingUrl!=='') $stream.=self::pdf_qr_commands($trackingUrl,0,190,2.5,288);
+        $bx=24; $by=52;
+        $stream.=self::pdf_barcode_commands($tracking,$bx,$by,288);
+        $stream.="BT /F1 11 Tf 24 36 Td (".$tracking.") Tj ET ";
+        return self::pdf_single_page($stream,288,432);
+    }
+
+    private static function pdf_single_page($stream,$width,$height) {
+        $pdf="%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+        $objects=[];
+        $objects[1]='<< /Type /Catalog /Pages 2 0 R >>';
+        $objects[2]='<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+        $objects[3]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '.$width.' '.$height.'] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>';
+        $objects[4]='<< /Length '.strlen($stream)." >>\nstream\n".$stream."\nendstream";
+        $objects[5]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+        ksort($objects,SORT_NUMERIC);
+        $offsets=[0];
+        foreach($objects as $num=>$obj){
+            $offsets[$num]=strlen($pdf);
+            $pdf.=$num." 0 obj\n".$obj."\nendobj\n";
+        }
+        $xref=strlen($pdf); $size=6;
+        $pdf.="xref\n0 ".$size."\n0000000000 65535 f \n";
+        for($i=1;$i<$size;$i++) $pdf.=sprintf("%010d 00000 n \n",$offsets[$i]);
+        $pdf.="trailer\n<< /Size ".$size." /Root 1 0 R >>\nstartxref\n".$xref."\n%%EOF";
+        return $pdf;
+    }
+
     private static function build_pdf($order,$type) {
+        if($type==='label') return self::build_label_pdf($order);
         self::ensure_documents($order);
         $invoice=$type==='invoice';
         $number=(string)($invoice?get_post_meta($order->get_id(),'_palma_invoice_number',true):get_post_meta($order->get_id(),'_palma_packing_number',true));
