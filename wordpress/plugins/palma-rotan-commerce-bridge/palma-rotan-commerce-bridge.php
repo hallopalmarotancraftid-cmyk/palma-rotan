@@ -614,7 +614,7 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
         $lines[]='';
         $lines[]='Order authentication barcode: '.$order->get_order_number().'-'.$number.'-'.$order->get_order_key();
 
-        $objects=[]; $streams=[]; $fontId=1; $pageIds=[];
+        $streams=[];
         $perPage=34; $chunks=array_chunk($lines,$perPage);
         foreach($chunks as $pageIndex=>$chunk){
             $content="BT /F1 10 Tf 42 800 Td ";
@@ -626,34 +626,83 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
             $content.="ET ";
             if($pageIndex===count($chunks)-1){
                 $bx=42; $by=105;
-                $content.="0 0 0 rg ".$bx." ".$by." m 0 0 l S ";
-                $content.="0 0 0 rg ";
                 $content.=self::pdf_barcode_commands($order->get_order_number().'-'.$number.'-'.$order->get_order_key(),$bx,$by);
             }
             $streams[]=$content;
         }
         $pdf="%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
-        $objects[]='<< /Type /Catalog /Pages 2 0 R >>';
-        $pageObjIds=[]; $objId=3;
+        $objects=[]; $pageObjIds=[]; $objId=3;
         foreach($streams as $stream){
             $pageObjIds[]=$objId;
-            $objects[]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents '.($objId+1).' 0 R >>';
-            $objects[]='<< /Length '.strlen($stream).' >>\nstream\n'.$stream.'\nendstream';
+            $objects[$objId]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 '.($objId+1).' 0 R >> >> /Contents '.($objId+1).' 0 R >>';
+            $objects[$objId+1]='<< /Length '.strlen($stream)." >>\nstream\n".$stream."\nendstream";
             $objId+=2;
         }
-        $pagesKids=implode(' ',array_map(fn($id)=>$id.' 0 R',$pageObjIds));
-        $objects[1]='<< /Type /Pages /Kids ['.$pagesKids.'] /Count '.count($pageObjIds).' >>';
-        array_unshift($objects,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-        $offsets=[0]; foreach($objects as $i=>$obj){$num=$i+1;$offsets[$num]=strlen($pdf);$pdf.=$num." 0 obj\n".$obj."\nendobj\n";}
-        $xref=strlen($pdf); $pdf.="xref\n0 ".(count($objects)+1)."\n0000000000 65535 f \n";
-        for($i=1;$i<=count($objects);$i++) $pdf.=sprintf('%010d 00000 n \n',$offsets[$i]);
-        $pdf.="trailer\n<< /Size ".(count($objects)+1)." /Root 1 0 R >>\nstartxref\n".$xref."\n%%EOF";
-        return $pdf;
+        $fontId=$objId;
+        $objects[$fontId]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+        $kids=implode(' ',array_map(fn($id)=>$id.' 0 R',$pageObjIds));
+        $objects[1]='<< /Type /Catalog /Pages 2 0 R >>';
+        $objects[2]='<< /Type /Pages /Kids ['.$kids.'] /Count '.count($pageObjIds).' >>';
+        ksort($objects,SORT_NUMERIC);
+        $offsets=[0];
+        foreach($objects as $num=>$obj){
+            $offsets[$num]=strlen($pdf);
+            $pdf.=$num." 0 obj\n".$obj."\nendobj\n";
+        }
+        $xref=strlen($pdf); $size=$fontId+1;
+        $pdf.="xref\n0 ".$size."\n0000000000 65535 f \n";
+        for($i=1;$i<$size;$i++) $pdf.=sprintf('%010d 00000 n \n',$offsets[$i]);
+        $pdf.="trailer\n<< /Size ".$size." /Root 1 0 R >>\nstartxref\n".$xref."\n%%EOF";
+
     }
 
+    public static function documents_on_paid($order_id) {
         $order=wc_get_order($order_id);
         if (!$order || !$order->is_paid()) return;
         self::ensure_documents($order);
+        self::send_documents_email($order);
+    }
+
+    public static function email_documents_note($order, $sent_to_admin, $plain_text, $email) {
+        if ($sent_to_admin || !$order || !$order->is_paid()) return;
+        $invoice=self::document_pdf_url($order,'invoice');
+        $packing=self::document_pdf_url($order,'packing');
+        if ($plain_text) {
+            echo "\nPALMA ROTAN documents:\nInvoice: ".$invoice."\nPacking List: ".$packing."\n";
+        } else {
+            echo '<p><strong>PALMA ROTAN documents:</strong> <a href="'.esc_url($invoice).'">Download Invoice PDF</a> · <a href="'.esc_url($packing).'">Download Packing List PDF</a></p>';
+        }
+    }
+
+    private static function document_pdf_url($order,$type) {
+        return rest_url(self::REST_NS.'/document-pdf/'.$type.'/'.$order->get_id()).'?key='.rawurlencode($order->get_order_key());
+    }
+
+    private static function send_documents_email($order) {
+        if (!$order || !$order->is_paid()) return false;
+        if (get_post_meta($order->get_id(),'_palma_documents_email_sent',true)) return true;
+        $email=$order->get_billing_email();
+        if (!$email || !is_email($email)) return false;
+        self::ensure_documents($order);
+        $tmp=[];
+        try {
+            foreach (['invoice','packing'] as $type) {
+                $pdf=self::build_pdf($order,$type);
+                $file=wp_tempnam('palma-'.$type.'-'.$order->get_order_number().'.pdf');
+                if (!$file || file_put_contents($file,$pdf)===false) throw new Exception('Gagal membuat file PDF.');
+                $tmp[$type]=$file;
+            }
+            $subject='PALMA ROTAN — Order #'.$order->get_order_number().' — Invoice & Packing List';
+            $message='Terima kasih telah berbelanja di PALMA ROTAN.\n\nPembayaran pesanan #'.$order->get_order_number().' telah berhasil. Invoice dan Packing List terlampir dalam email ini.\n\nInvoice: '.self::document_pdf_url($order,'invoice').'\nPacking List: '.self::document_pdf_url($order,'packing').'\n';
+            $sent=wp_mail($email,$subject,$message,['Content-Type: text/plain; charset=UTF-8'],[$tmp['invoice'],$tmp['packing']]);
+            if ($sent) update_post_meta($order->get_id(),'_palma_documents_email_sent',gmdate('c'));
+            foreach ($tmp as $file) if (is_string($file) && file_exists($file)) @unlink($file);
+            return (bool)$sent;
+        } catch (Throwable $e) {
+            foreach ($tmp as $file) if (is_string($file) && file_exists($file)) @unlink($file);
+            $order->add_order_note('PALMA document email gagal: '.$e->getMessage());
+            return false;
+        }
     }
 
     private static function ensure_documents($order) {
