@@ -239,11 +239,6 @@ final class Palma_Rotan_Commerce_Bridge {
             // WooCommerce's order-pay page decides which receipt/payment UI to render
             // from the order's saved payment method. The PALMA checkout calls the
             // gateway directly, so persist that method explicitly before redirecting.
-            if (function_exists('wc_get_payment_gateway_by_order')) {
-                $gateway_object = wc_get_payment_gateway_by_order($order);
-            } else {
-                $gateway_object = null;
-            }
             if (!$order->get_payment_method() || $order->get_payment_method() !== $gateway_id) {
                 $order->set_payment_method($gateway_id);
                 if (isset($gateways[$gateway_id]) && $gateways[$gateway_id] instanceof WC_Payment_Gateway) {
