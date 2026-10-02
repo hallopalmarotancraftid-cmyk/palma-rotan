@@ -163,6 +163,10 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total() * ($currency === 'USD' ? $rate : 1)));
             $order->save();
 
+            // Keep the order auditable if payment initialization fails. WooCommerce can
+            // later recover/retry the pending order instead of silently losing it.
+            $order->update_status('pending', 'PALMA checkout created; awaiting payment gateway initialization.');
+
             $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
             $payment_url = '';
             $payment_token = '';
