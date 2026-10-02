@@ -206,7 +206,7 @@ __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
 function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
-async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}await ensureLogisticsEventSchema(env);return true}
+async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg","shipping_provider","provider_order_id","provider_tracking_id","shipping_error","shipping_created_at"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}await ensureLogisticsEventSchema(env);return true}
 async function ensureLogisticsEventSchema(env){await env.DB.prepare(`CREATE TABLE IF NOT EXISTS tracking_events (id TEXT PRIMARY KEY,order_id TEXT NOT NULL,tracking_number TEXT,status TEXT,event_time TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,location TEXT,description TEXT,source TEXT NOT NULL DEFAULT 'system',raw_payload TEXT)`).run();await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tracking_events_order_time ON tracking_events(order_id,event_time)").run();await env.DB.prepare(`CREATE TABLE IF NOT EXISTS notification_logs (id TEXT PRIMARY KEY,order_id TEXT NOT NULL,notification_type TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,provider_id TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,sent_at TEXT,error_message TEXT)`).run();await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_notification_logs_order_type ON notification_logs(order_id,notification_type)").run();return true}
 async function sendReadyToShipDocumentsEmail(order,items,branding,env){if(String(order.order_status||"").toUpperCase().replace(/_/g," ")!=="READY TO SHIP"||!String(order.tracking_number||"").trim())return {ok:false,skipped:true,reason:"READY_TO_SHIP dan tracking_number wajib tersedia"};const key="ready-to-ship-documents-"+order.id+"-"+String(order.tracking_number).trim();await ensureLogisticsEventSchema(env);const existing=await env.DB.prepare("SELECT * FROM notification_logs WHERE idempotency_key=?").bind(key).first();if(existing&&existing.status==="SENT")return {ok:true,duplicate:true,id:existing.provider_id||null};if(!existing){try{await env.DB.prepare("INSERT INTO notification_logs(id,order_id,notification_type,idempotency_key,status) VALUES(?,?,?,?,?)").bind(id("notif"),order.id,"READY_TO_SHIP_DOCUMENTS",key,"PENDING").run()}catch(error){if(!/unique|constraint/i.test(String(error?.message||error)))throw error;const concurrent=await env.DB.prepare("SELECT * FROM notification_logs WHERE idempotency_key=?").bind(key).first();if(concurrent?.status==="SENT")return {ok:true,duplicate:true,id:concurrent.provider_id||null}}}try{const result=await sendOrderDocumentsEmail(order,items,branding,env,key);if(result.ok){await env.DB.prepare("UPDATE notification_logs SET status='SENT',provider_id=?,sent_at=CURRENT_TIMESTAMP,error_message=NULL WHERE idempotency_key=?").bind(result.id||null,key).run();return result}await env.DB.prepare("UPDATE notification_logs SET status='SKIPPED',error_message=? WHERE idempotency_key=?").bind(result.reason||"skipped",key).run();return result}catch(error){await env.DB.prepare("UPDATE notification_logs SET status='FAILED',error_message=? WHERE idempotency_key=?").bind(String(error?.message||error).slice(0,500),key).run();throw error}}
 async function ensureProductLogisticsSchema(env){
@@ -229,10 +229,129 @@ async function ensureProductLogisticsSchema(env){
   return true;
 }
 __name(ensureProductLogisticsSchema,"ensureProductLogisticsSchema");
-function sandboxTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-12);return "TEST-"+prefix+"-"+clean}
-function createSandboxShipment(order,carrier,env){const trackingNumber=sandboxTrackingNumber(order.order_number,carrier);return {trackingNumber,trackingUrl:trackingUrl(order,env),mode:"SANDBOX",test:true}}
-function generatedTrackingNumber(orderNumber,carrier){const prefix=carrier==="J&T"?"JNT":"DHL";const clean=String(orderNumber||"").replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(-10);return prefix+clean}
-__name(generatedTrackingNumber,"generatedTrackingNumber");
+function parseDimensionsCm(value){
+  const nums=String(value||"").match(/\\d+(?:[.,]\\d+)?/g)||[];
+  const n=nums.map(x=>Number(String(x).replace(",","."))).filter(Number.isFinite);
+  return {length:n[0]||1,width:n[1]||1,height:n[2]||1};
+}
+function biteshipConfig(env,carrier){
+  const domestic=carrier==="J&T";
+  const apiKey=String(env.BITESHIP_API_KEY||"").trim();
+  const courierCompany=String(env[domestic?"BITESHIP_DOMESTIC_COURIER":"BITESHIP_EXPORT_COURIER"]||"").trim().toLowerCase();
+  const courierType=String(env[domestic?"BITESHIP_DOMESTIC_SERVICE":"BITESHIP_EXPORT_SERVICE"]||"").trim();
+  return {apiKey,courierCompany,courierType,mode:String(env.BITESHIP_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"};
+}
+function biteshipAuthHeaders(apiKey){return {authorization:apiKey,"content-type":"application/json","accept":"application/json"}}
+async function createBiteshipShipment(orderId,env){
+  await ensureShippingSchema(env);
+  const row=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,c.country,pk.id AS packing_id,pk.courier,pk.tracking_number,pk.provider_order_id,pk.provider_tracking_id,pk.shipping_provider FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? LIMIT 1`).bind(orderId).first();
+  if(!row) return {ok:false,skipped:true,reason:"Order tidak ditemukan"};
+  if(String(row.payment_status||"").toUpperCase()!=="PAID") return {ok:false,skipped:true,reason:"Order belum PAID"};
+  if(row.provider_order_id || row.tracking_number) return {ok:true,duplicate:true,providerOrderId:row.provider_order_id||null,trackingNumber:row.tracking_number||null};
+  const carrier=String(row.courier||shippingCarrierForCountry(row.country)).trim().toUpperCase();
+  const cfg=biteshipConfig(env,carrier);
+  if(!cfg.apiKey) return {ok:false,skipped:true,reason:"BITESHIP_API_KEY belum dikonfigurasi"};
+  if(!cfg.courierCompany||!cfg.courierType) return {ok:false,skipped:true,reason:"Kode courier/service Biteship belum dikonfigurasi untuk "+carrier};
+  const originPostal=String(env.PALMA_ORIGIN_POSTAL_CODE||"").trim();
+  const originPhone=String(env.PALMA_ORIGIN_PHONE||"").trim();
+  const originEmail=String(env.PALMA_ORIGIN_EMAIL||"").trim();
+  const originAddress=String(env.PALMA_ORIGIN_ADDRESS||"").trim();
+  const originName=String(env.PALMA_ORIGIN_NAME||"PALMA ROTAN").trim();
+  if(!originPostal||!originPhone||!originAddress) return {ok:false,skipped:true,reason:"Alamat pickup PALMA belum lengkap: PALMA_ORIGIN_POSTAL_CODE, PALMA_ORIGIN_PHONE, PALMA_ORIGIN_ADDRESS"};
+  let destination={};
+  try{destination=JSON.parse(String(row.shipping_address_json||"{}"))}catch(_){destination={}};
+  const postal=String(destination.postalCode||"").trim();
+  if(!postal) return {ok:false,skipped:true,reason:"Postal code tujuan kosong"};
+  const itemRows=(await env.DB.prepare(`SELECT oi.product_name,oi.quantity,oi.unit_price,oi.currency,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid`).bind(orderId).all()).results||[];
+  if(!itemRows.length) return {ok:false,skipped:true,reason:"Item order kosong"};
+  const rate=Number(row.admin_exchange_rate)||16000;
+  const items=itemRows.map(item=>{
+    const dims=parseDimensionsCm(item.dimensions_cm);
+    const valueRaw=Number(item.unit_price)||0;
+    const valueIdr=String(item.currency||row.original_currency||"IDR").toUpperCase()==="USD"?Math.round(valueRaw*rate):Math.round(valueRaw);
+    return {name:String(item.product_name||"PALMA ROTAN").slice(0,100),description:"Rattan craft",value:valueIdr,quantity:Math.max(1,Number(item.quantity)||1),length:dims.length,width:dims.width,height:dims.height,weight:Math.max(1,Math.round((Number(item.weight_kg)||0)*1000))};
+  });
+  const payload={
+    shipper_contact_name:originName,
+    shipper_contact_phone:originPhone,
+    shipper_contact_email:originEmail||undefined,
+    shipper_organization:"PALMA ROTAN",
+    origin_contact_name:originName,
+    origin_contact_phone:originPhone,
+    origin_contact_email:originEmail||undefined,
+    origin_address:originAddress,
+    origin_postal_code:Number(originPostal),
+    destination_contact_name:String((destination.firstName||"")+" "+(destination.lastName||"")).trim()||String(row.first_name||"Customer"),
+    destination_contact_phone:String(row.phone||"").trim(),
+    destination_contact_email:String(row.email||"").trim()||undefined,
+    destination_address:[destination.address,destination.address2,destination.city,destination.province].filter(Boolean).join(", "),
+    destination_postal_code:Number(postal),
+    courier_company:cfg.courierCompany,
+    courier_type:cfg.courierType,
+    delivery_type:"now",
+    order_note:"PALMA ROTAN "+String(row.order_number||""),
+    metadata:{palma_order_id:row.id,source_system:row.source_system||null,source_order_id:row.source_order_id||null},
+    reference_id:String(row.id),
+    items
+  };
+  const clean=JSON.parse(JSON.stringify(payload));
+  const response=await fetch("https://api.biteship.com/v1/orders",{method:"POST",headers:biteshipAuthHeaders(cfg.apiKey),body:JSON.stringify(clean)});
+  const raw=await response.text(); let data={}; try{data=raw?JSON.parse(raw):{}}catch(_){data={raw:raw.slice(0,1000)}}
+  if(!response.ok||data.success===false){
+    const message=String(data.error||data.message||("Biteship HTTP "+response.status)).slice(0,1000);
+    await env.DB.prepare("UPDATE packing_orders SET shipping_provider='biteship',shipping_error=? WHERE order_id=?").bind(message,orderId).run();
+    return {ok:false,error:message,status:response.status,providerBody:data};
+  }
+  const providerOrderId=String(data.id||"").trim()||null;
+  const providerTrackingId=String(data.courier?.tracking_id||"").trim()||null;
+  const waybill=String(data.courier?.waybill_id||"").trim()||null;
+  const providerLink=String(data.courier?.link||"").trim()||null;
+  if(!providerOrderId||!waybill){
+    const message="Biteship berhasil merespons tetapi waybill resmi belum tersedia";
+    await env.DB.prepare("UPDATE packing_orders SET shipping_provider='biteship',provider_order_id=?,provider_tracking_id=?,shipping_error=? WHERE order_id=?").bind(providerOrderId,providerTrackingId,message,orderId).run();
+    return {ok:false,error:message,providerOrderId,providerTrackingId};
+  }
+  const finalCourier=String(data.courier?.company||cfg.courierCompany).toUpperCase();
+  const finalUrl=providerLink||carrierTrackingUrl(carrier,waybill);
+  await env.DB.prepare(`UPDATE packing_orders SET shipping_provider='biteship',provider_order_id=?,provider_tracking_id=?,courier=?,tracking_number=?,tracking_url=?,shipping_error=NULL,shipping_created_at=CURRENT_TIMESTAMP,status='READY TO SHIP' WHERE order_id=?`).bind(providerOrderId,providerTrackingId,finalCourier,waybill,finalUrl,orderId).run();
+  await env.DB.prepare("INSERT INTO tracking_events(id,order_id,tracking_number,status,event_time,location,description,source,raw_payload) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?,?,?,?,?)").bind(id("trackevt"),orderId,waybill,"READY TO SHIP",null,"Official waybill generated by Biteship","biteship",JSON.stringify(data)).run();
+  await env.DB.prepare("UPDATE orders SET order_status='READY TO SHIP',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status='PAID'").bind(orderId).run();
+  return {ok:true,providerOrderId,providerTrackingId,trackingNumber:waybill,trackingUrl:finalUrl,mode:cfg.mode};
+}
+async function createBiteshipShipmentSafe(orderId,env){
+  try{return await createBiteshipShipment(orderId,env)}
+  catch(error){
+    console.error("BITESHIP_CREATE_ERROR",{orderId,message:error?.message||String(error)});
+    try{await env.DB.prepare("UPDATE packing_orders SET shipping_provider='biteship',shipping_error=? WHERE order_id=?").bind(String(error?.message||error).slice(0,1000),orderId).run()}catch(_){}
+    return {ok:false,error:String(error?.message||error)};
+  }
+}
+async function updateBiteshipWebhook(request,env){
+  await ensureShippingSchema(env);
+  const secret=String(env.BITESHIP_WEBHOOK_SECRET||"").trim();
+  const headerName=String(env.BITESHIP_WEBHOOK_HEADER||"x-biteship-webhook-secret").trim().toLowerCase();
+  if(!secret)return json({error:"BITESHIP_WEBHOOK_SECRET belum dikonfigurasi"},503,cors(request));
+  const provided=String(request.headers.get(headerName)||"").trim();
+  if(!provided||provided!==secret)return json({error:"Invalid Biteship webhook secret"},401,cors(request));
+  const raw=await request.text(); let body={}; try{body=JSON.parse(raw)}catch{return json({error:"Payload webhook bukan JSON valid"},400,cors(request))}
+  const providerOrderId=String(body.order_id||"").trim();
+  const waybill=String(body.courier_waybill_id||"").trim()||null;
+  const trackingId=String(body.courier_tracking_id||"").trim()||null;
+  if(!providerOrderId)return json({ok:true,ignored:true},200,cors(request));
+  const pack=await env.DB.prepare("SELECT order_id,tracking_number FROM packing_orders WHERE provider_order_id=? LIMIT 1").bind(providerOrderId).first();
+  if(!pack)return json({ok:true,ignored:true,reason:"provider order not mapped"},200,cors(request));
+  const statusRaw=String(body.status||"").trim();
+  const normalized=statusRaw.toLowerCase().replace(/[-_ ]/g,"");
+  const statusMap={confirmed:"READY TO SHIP",scheduled:"READY TO SHIP",allocated:"READY TO SHIP",pickingup:"READY TO SHIP",picked:"SHIPPED",intransit:"IN TRANSIT",droppingoff:"IN TRANSIT",delivered:"DELIVERED",returnintransit:"RETURNED",returned:"RETURNED",cancelled:"CANCELLED",rejected:"ISSUE",couriernotfound:"ISSUE",onhold:"ISSUE",disposed:"ISSUE"};
+  const mapped=statusMap[normalized]||null;
+  const finalWaybill=waybill||pack.tracking_number||null;
+  const trackingUrlValue=String(body.courier_link||"").trim()||null;
+  await env.DB.prepare("UPDATE packing_orders SET provider_tracking_id=COALESCE(?,provider_tracking_id),tracking_number=COALESCE(?,tracking_number),tracking_url=COALESCE(?,tracking_url),status=COALESCE(?,status),shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END,shipping_error=NULL WHERE provider_order_id=?").bind(trackingId,finalWaybill,trackingUrlValue,mapped,statusMap[normalized]||"",statusMap[normalized]||"",providerOrderId).run();
+  await env.DB.prepare("INSERT INTO tracking_events(id,order_id,tracking_number,status,event_time,location,description,source,raw_payload) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?,?,?,?,?)").bind(id("trackevt"),pack.order_id,finalWaybill,mapped||statusRaw,null,"Biteship shipment status update","biteship",raw).run();
+  if(mapped) await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(mapped,pack.order_id).run();
+  return json({ok:true,orderId:pack.order_id,status:mapped||statusRaw,trackingNumber:finalWaybill},200,cors(request));
+}
+
 function carrierTrackingUrl(carrier,tracking){const t=String(tracking||"").trim();if(carrier==="J&T")return "https://www.jet.co.id/track"+(t?"?bills="+encodeURIComponent(t):"");return "https://www.dhl.com/global-en/home/tracking.html?tracking-id="+encodeURIComponent(t)}
 __name(carrierTrackingUrl,"carrierTrackingUrl");
 function calculateShippingAmount(country, method, currency, usdToIdrRate) {
@@ -498,6 +617,10 @@ async function wooCommerceOrderSync(request,env){
     console.error("WOOCOMMERCE_SYNC_ERROR",{sourceOrderId,message:error?.message||String(error)});
     return json({error:"Gagal menyimpan order WooCommerce ke PALMA"},500,cors(request));
   }
+  const shippingAutomation=await createBiteshipShipmentSafe(orderId,env);
+  if(!shippingAutomation.ok && !shippingAutomation.skipped){
+    console.error("WOOCOMMERCE_SHIPPING_AUTOMATION_ERROR",{orderId,error:shippingAutomation.error||shippingAutomation.reason||"unknown"});
+  }
   return json({
     ok:true,
     duplicate:false,
@@ -700,14 +823,11 @@ async function adminShipping(request,env){
   const mode=shippingMode(env);
   let shipmentTest=false;
   if(autoCreateShipment && !trackingNumber){
-    if(mode==="SANDBOX"){
-      const shipment=createSandboxShipment(order,courier,env);
-      trackingNumber=shipment.trackingNumber;
-      trackingUrlValue=shipment.trackingUrl;
-      shipmentTest=true;
-    }else{
-      return json({error:"Automatic production shipment belum dikonfigurasi dengan API resmi kurir. Masukkan nomor waybill resmi J&T/DHL secara manual atau konfigurasi provider resmi.",code:"SHIPPING_PROVIDER_NOT_CONFIGURED",shipmentMode:"PRODUCTION"},409,cors(request));
-    }
+    const result=await createBiteshipShipmentSafe(order.id,env);
+    if(!result.ok)return json({ok:false,error:result.error||result.reason||"Gagal membuat shipment otomatis",code:"SHIPPING_PROVIDER_ERROR",shipmentMode:mode},409,cors(request));
+    trackingNumber=result.trackingNumber||null;
+    trackingUrlValue=result.trackingUrl||trackingUrlValue;
+    shipmentTest=mode==="SANDBOX";
   }
   if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(request));
   const country=String((await env.DB.prepare("SELECT json_extract(shipping_address_json,'$.country') AS country FROM orders WHERE id=?").bind(order.id).first())?.country||"").toLowerCase();
@@ -1557,6 +1677,7 @@ var index_default = {
     if (url.pathname === "/api/orders" && request.method === "POST") return createOrder(request, env);
     if (url.pathname === "/api/admin/orders" && request.method === "GET") return adminOrders(request, env);
     if (url.pathname === "/api/integrations/woocommerce/order" && request.method === "POST") return wooCommerceOrderSync(request, env);
+    if (url.pathname === "/api/integrations/biteship/webhook" && request.method === "POST") return updateBiteshipWebhook(request, env);
     if (url.pathname === "/api/admin/shipping" && request.method === "POST") return adminShipping(request, env);
     const trackMatch = url.pathname.match(/^\/track\/([^/]+)\/([^/]+)$/);
     if (trackMatch && request.method === "GET") return publicTracking(request, env, decodeURIComponent(trackMatch[1]), decodeURIComponent(trackMatch[2]));
