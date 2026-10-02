@@ -19,6 +19,7 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_post_palma_save_tracking', [__CLASS__, 'save_tracking']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
+        add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
     }
 
     public static function routes() {
@@ -42,6 +43,20 @@ final class Palma_Rotan_Commerce_Bridge {
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'document'],
         ]);
+    }
+
+    public static function serve_cors($served, $result, $request, $server) {
+        $route = $request->get_route();
+        if (strpos($route, '/' . self::REST_NS . '/') !== 0) return $served;
+        $allowed = trim((string) get_option('palma_allowed_origin', 'https://palma-rotan.pages.dev'));
+        $origin = isset($_SERVER['HTTP_ORIGIN']) ? trim((string) wp_unslash($_SERVER['HTTP_ORIGIN'])) : '';
+        if ($allowed && $origin === $allowed) {
+            header('Access-Control-Allow-Origin: ' . $allowed);
+            header('Vary: Origin');
+            header('Access-Control-Allow-Headers: Content-Type, X-Palma-Order-Key');
+            header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+        }
+        return $served;
     }
 
     private static function cors($response) {
