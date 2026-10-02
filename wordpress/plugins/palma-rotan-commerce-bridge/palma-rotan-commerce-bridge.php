@@ -255,7 +255,27 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->set_shipping_state(sanitize_text_field($shipping['province'] ?? ''));
             $order->set_shipping_postcode(sanitize_text_field($shipping['postalCode'] ?? ''));
 
-            $shipping_method_input = strtolower(trim(sanitize_text_field($body['shippingMethod'] ?? 'standard')));
+            $shipping_quote_id = sanitize_text_field($body['shippingQuoteId'] ?? '');
+            $shipping_quote = $shipping_quote_id !== '' ? get_transient($shipping_quote_id) : false;
+            $shipping_selected = null;
+            if (is_array($shipping_quote)) {
+                $quoteFingerprint = hash('sha256', wp_json_encode([
+                    'country' => strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? '')),
+                    'postal' => preg_replace('/[^0-9]/', '', (string)($shipping['postalCode'] ?? '')),
+                    'items' => $items
+                ], JSON_UNESCAPED_SLASHES));
+                if (($shipping_quote['fingerprint'] ?? '') !== $quoteFingerprint) throw new Exception('Ongkir berubah. Silakan hitung ulang ongkir.');
+                $selectedCompany = sanitize_key($body['shippingCarrier'] ?? '');
+                $selectedService = sanitize_key($body['shippingServiceCode'] ?? '');
+                foreach (($shipping_quote['options'] ?? []) as $option) {
+                    if (($option['company'] ?? '') === $selectedCompany && ($option['serviceCode'] ?? '') === $selectedService) {
+                        $shipping_selected = $option;
+                        break;
+                    }
+                }
+                if (!$shipping_selected) throw new Exception('Layanan pengiriman tidak valid. Silakan pilih ulang.');
+            }
+            $shipping_method_input = strtolower(trim(sanitize_text_field($body['shippingMethod'] ?? ($shipping_selected['serviceName'] ?? 'standard'))));
             $shipping_methods = [
                 'standard' => 'Standard',
                 'express' => 'Express',
