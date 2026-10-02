@@ -34,6 +34,11 @@ final class Palma_Rotan_Commerce_Bridge {
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'products'],
         ]);
+        register_rest_route(self::REST_NS, '/shipping-rates', [
+            'methods' => 'POST',
+            'permission_callback' => '__return_true',
+            'callback' => [__CLASS__, 'shipping_rates'],
+        ]);
         register_rest_route(self::REST_NS, '/order', [
             [
                 'methods' => 'POST',
