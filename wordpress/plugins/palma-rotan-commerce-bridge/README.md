@@ -19,5 +19,15 @@ Cloudflare visitor -> POST /wp-json/palma/v1/order -> WooCommerce Order -> Midtr
 
 - Produk dicari berdasarkan SKU atau product ID.
 - WooCommerce adalah sumber order utama; D1 order tidak dipakai oleh bridge.
-- Invoice/Packing dibuat sebagai HTML print-ready setelah order paid. Tombol Print / Save PDF tersedia dari browser.
+- Setelah order paid, Invoice dan Packing List dibuat otomatis sebagai PDF A4, tersedia sebagai download yang dilindungi order key, dan dikirim sebagai attachment ke email pembeli. Sistem juga menambahkan link download PDF pada email order WooCommerce.
 - Shipping method diteruskan sebagai metadata/order shipping item; tarif shipping final harus dikonfigurasi di WooCommerce/custom shipping integration sebelum production.
+
+
+## Dokumen & email
+
+- Endpoint PDF: `/wp-json/palma/v1/document-pdf/invoice/{order_id}?key={order_key}` dan `/packing/{order_id}`.
+- Dokumen hanya dapat diakses dengan order key dan hanya setelah order berstatus paid.
+- Nomor Invoice dan Packing List bersifat idempotent; retry hook tidak membuat nomor baru.
+- Email dokumen hanya dikirim sekali setelah `wp_mail()` berhasil; jika gagal, sistem dapat mencoba lagi pada hook paid berikutnya.
+- PDF dibuat langsung oleh bridge sehingga tidak membutuhkan library PDF eksternal.
+- Email pembeli tetap membutuhkan konfigurasi mail server/SMTP WordPress yang benar agar `wp_mail()` benar-benar terkirim.
