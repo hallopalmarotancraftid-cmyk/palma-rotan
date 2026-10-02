@@ -280,7 +280,7 @@ final class Palma_Rotan_Commerce_Bridge {
                 'standard' => 'Standard',
                 'express' => 'Express',
             ];
-            if (!isset($shipping_methods[$shipping_method_input])) {
+            if (!$shipping_selected && !isset($shipping_methods[$shipping_method_input])) {
                 throw new Exception('Metode pengiriman tidak valid. Pilih Standard atau Express.');
             }
             $shipping_method = $shipping_methods[$shipping_method_input];
