@@ -196,7 +196,8 @@ async function loadShippingRates(){
   const box=document.getElementById('palmaShippingRates'); if(!select||!quote)return;
   if(box)box.textContent=data.settings.language==='ID'?'Mengambil ongkir...':'Calculating shipping...';
   try{
-    const r=await fetch(api+'/wp-json/palma/v1/shipping-rates',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+    const rateEndpoint=api+'/wp-json/palma/v1/shipping-rates?_palma_cache='+Date.now();
+    const r=await fetch(rateEndpoint,{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({
       items:cart().map(x=>{const p=data.products.find(p=>p.id===x.id);return {sku:p?.sku||p?.sku_code||x.id,quantity:x.qty}}),
       shippingAddress:{country,postalCode:postal}
     })});
