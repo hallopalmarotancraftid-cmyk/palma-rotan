@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.9
+ * Version: 1.0.10
  * Requires Plugins: woocommerce
  */
 
@@ -666,7 +666,7 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
         for($n=0;$n<strlen($value);$n++){
             $p=$patterns[$value[$n]]??$patterns['-'];
             for($i=0;$i<strlen($p);$i++){
-                if($p[$i]==='1') $cmd.=$unit.' 0 0 '.$h.' '.$x.' '.$y.' re f ';
+                if($p[$i]==='1') $cmd.=$x.' '.$y.' '.$unit.' '.$h.' re f ';
                 $x+=$unit;
             }
             $x+=$unit;
