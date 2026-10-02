@@ -137,17 +137,22 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->set_currency('IDR');
 
             $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
+            $requested = [];
             foreach ($items as $row) {
                 $lookup = sanitize_text_field($row['sku'] ?? '');
                 if ($lookup === '') throw new Exception('SKU produk wajib tersedia untuk checkout WooCommerce.');
-                $product = false;
-                if (!$product && $lookup) {
-                    $ids = wc_get_products(['sku'=>$lookup,'limit'=>1,'return'=>'ids']);
-                    $product = $ids ? wc_get_product($ids[0]) : false;
-                }
-                if (!$product) throw new Exception('Produk tidak ditemukan: '.$lookup);
-                $qty = max(1, (int) ($row['quantity'] ?? 1));
+                $qty = (int) ($row['quantity'] ?? 0);
+                if ($qty < 1) throw new Exception('Quantity produk harus minimal 1.');
+                $requested[$lookup] = ($requested[$lookup] ?? 0) + $qty;
+            }
+            foreach ($requested as $lookup => $qty) {
+                $ids = wc_get_products(['sku'=>$lookup,'status'=>'publish','limit'=>1,'return'=>'ids']);
+                $product = $ids ? wc_get_product($ids[0]) : false;
+                if (!$product || !$product->is_purchasable()) throw new Exception('Produk tidak tersedia untuk dibeli: '.$lookup);
                 if ($product->managing_stock() && $product->get_stock_quantity() < $qty) throw new Exception('Stok tidak mencukupi untuk '.$product->get_name());
+                $type = (string) get_post_meta($product->get_id(), '_palma_type', true);
+                $moq = max(1, (int) get_post_meta($product->get_id(), '_palma_moq', true));
+                if ($type === 'custom' && $qty < $moq) throw new Exception('MOQ untuk '.$product->get_name().' adalah '.$moq.'.');
                 $price_idr = (float) get_post_meta($product->get_id(), '_palma_price_idr', true);
                 $base_price = (float) $product->get_regular_price();
                 $unit_idr = $price_idr > 0 ? $price_idr : ($base_price * $rate);
