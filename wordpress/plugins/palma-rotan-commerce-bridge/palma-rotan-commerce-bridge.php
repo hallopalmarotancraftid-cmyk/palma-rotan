@@ -34,6 +34,11 @@ final class Palma_Rotan_Commerce_Bridge {
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'products'],
         ]);
+        register_rest_route(self::REST_NS, '/shipping-rates', [
+            'methods' => 'POST',
+            'permission_callback' => '__return_true',
+            'callback' => [__CLASS__, 'shipping_rates'],
+        ]);
         register_rest_route(self::REST_NS, '/order', [
             [
                 'methods' => 'POST',
@@ -146,6 +151,68 @@ final class Palma_Rotan_Commerce_Bridge {
         return self::cors(new WP_REST_Response(['products'=>$out], 200));
     }
 
+    public static function shipping_rates(WP_REST_Request $request) {
+        if (!class_exists('WooCommerce')) return self::error('WooCommerce belum aktif.', 503);
+        $body=$request->get_json_params();
+        $items=is_array($body['items']??null)?$body['items']:[];
+        $shipping=is_array($body['shippingAddress']??null)?$body['shippingAddress']:[];
+        $country=strtoupper(sanitize_text_field($shipping['country']??''));
+        $postal=preg_replace('/[^0-9]/','',(string)($shipping['postalCode']??''));
+        if(!$items)return self::error('Produk wajib diisi.',400);
+        if(!preg_match('/^[A-Z]{2}$/',$country))return self::error('Negara pengiriman tidak valid.',400);
+        if($postal==='')return self::error('Kode pos wajib diisi.',400);
+        $apiKey=trim((string)get_option('palma_biteship_api_key',''));
+        if($apiKey==='')return self::error('Biteship belum dikonfigurasi.',503);
+        $origin=preg_replace('/[^0-9]/','',(string)get_option('palma_biteship_origin_postal','59464'));
+        $couriers=trim((string)get_option($country==='ID'?'palma_biteship_domestic_couriers':'palma_biteship_export_couriers',$country==='ID'?'jnt':'dhl'));
+        if($origin===''||$couriers==='')return self::error('Konfigurasi Biteship belum lengkap.',503);
+        $rate=max(1,(float)get_option('palma_usd_idr_rate',16000));
+        $prepared=[];
+        foreach($items as $row){
+            $sku=sanitize_text_field($row['sku']??''); $qty=max(1,(int)($row['quantity']??0));
+            $ids=$sku!==''?wc_get_products(['sku'=>$sku,'status'=>'publish','limit'=>1,'return'=>'ids']):[];
+            $product=$ids?wc_get_product($ids[0]):false;
+            if(!$product||!$product->is_purchasable())return self::error('Produk tidak tersedia.',400);
+            $priceIdr=(float)get_post_meta($product->get_id(),'_palma_price_idr',true);
+            $base=(float)$product->get_regular_price();
+            $value=$priceIdr>0?$priceIdr:$base*$rate;
+            $prepared[]=[
+                'name'=>(string)$product->get_name(),
+                'description'=>'PALMA ROTAN rattan craft',
+                'sku'=>(string)$product->get_sku(),
+                'value'=>(int)round($value),
+                'quantity'=>$qty,
+                'weight'=>max(1,(int)round(((float)$product->get_weight())*1000)),
+                'length'=>max(1,(float)$product->get_length()),
+                'width'=>max(1,(float)$product->get_width()),
+                'height'=>max(1,(float)$product->get_height())
+            ];
+        }
+        $response=wp_remote_post('https://api.biteship.com/v1/rates/couriers',[
+            'timeout'=>20,'blocking'=>true,
+            'headers'=>['Authorization'=>$apiKey,'Content-Type'=>'application/json','Accept'=>'application/json'],
+            'body'=>wp_json_encode(['origin_postal_code'=>(int)$origin,'destination_postal_code'=>(int)$postal,'couriers'=>$couriers,'items'=>$prepared],JSON_UNESCAPED_SLASHES),
+            'data_format'=>'body'
+        ]);
+        if(is_wp_error($response))return self::error('Biteship Rates gagal: '.$response->get_error_message(),502);
+        $code=(int)wp_remote_retrieve_response_code($response);
+        $data=json_decode((string)wp_remote_retrieve_body($response),true);
+        if($code<200||$code>=300||!is_array($data)||empty($data['success']))return self::error(is_array($data)&&!empty($data['message'])?(string)$data['message']:'Biteship Rates HTTP '.$code,502);
+        $options=[];
+        foreach((array)($data['pricing']??[]) as $p){
+            $company=sanitize_key($p['company']??$p['courier_code']??'');
+            $service=sanitize_key($p['courier_service_code']??$p['type']??'');
+            $price=(float)($p['price']??0);
+            if($company===''||$service===''||$price<0)continue;
+            $options[]=['company'=>$company,'courierName'=>(string)($p['courier_name']??$company),'serviceCode'=>$service,'serviceName'=>(string)($p['courier_service_name']??$service),'duration'=>(string)($p['duration']??''),'priceIdr'=>(int)round($price)];
+        }
+        if(!$options)return self::error('Tidak ada layanan pengiriman yang tersedia untuk tujuan tersebut.',422);
+        $quoteId='pq_'.wp_generate_uuid4();
+        $fingerprint=hash('sha256',wp_json_encode(['country'=>$country,'postal'=>$postal,'items'=>$items],JSON_UNESCAPED_SLASHES));
+        set_transient($quoteId,['fingerprint'=>$fingerprint,'country'=>$country,'postal'=>$postal,'options'=>$options],15*MINUTE_IN_SECONDS);
+        return self::cors(new WP_REST_Response(['ok'=>true,'quoteId'=>$quoteId,'currency'=>'IDR','options'=>$options,'expiresIn'=>900],200));
+    }
+
     public static function create_order(WP_REST_Request $request) {
         if (!class_exists('WooCommerce')) return self::error('WooCommerce belum aktif.', 503);
         $body = $request->get_json_params();
@@ -188,12 +255,32 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->set_shipping_state(sanitize_text_field($shipping['province'] ?? ''));
             $order->set_shipping_postcode(sanitize_text_field($shipping['postalCode'] ?? ''));
 
-            $shipping_method_input = strtolower(trim(sanitize_text_field($body['shippingMethod'] ?? 'standard')));
+            $shipping_quote_id = sanitize_text_field($body['shippingQuoteId'] ?? '');
+            $shipping_quote = $shipping_quote_id !== '' ? get_transient($shipping_quote_id) : false;
+            $shipping_selected = null;
+            if (is_array($shipping_quote)) {
+                $quoteFingerprint = hash('sha256', wp_json_encode([
+                    'country' => strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? '')),
+                    'postal' => preg_replace('/[^0-9]/', '', (string)($shipping['postalCode'] ?? '')),
+                    'items' => $items
+                ], JSON_UNESCAPED_SLASHES));
+                if (($shipping_quote['fingerprint'] ?? '') !== $quoteFingerprint) throw new Exception('Ongkir berubah. Silakan hitung ulang ongkir.');
+                $selectedCompany = sanitize_key($body['shippingCarrier'] ?? '');
+                $selectedService = sanitize_key($body['shippingServiceCode'] ?? '');
+                foreach (($shipping_quote['options'] ?? []) as $option) {
+                    if (($option['company'] ?? '') === $selectedCompany && ($option['serviceCode'] ?? '') === $selectedService) {
+                        $shipping_selected = $option;
+                        break;
+                    }
+                }
+                if (!$shipping_selected) throw new Exception('Layanan pengiriman tidak valid. Silakan pilih ulang.');
+            }
+            $shipping_method_input = strtolower(trim(sanitize_text_field($body['shippingMethod'] ?? ($shipping_selected['serviceName'] ?? 'standard'))));
             $shipping_methods = [
                 'standard' => 'Standard',
                 'express' => 'Express',
             ];
-            if (!isset($shipping_methods[$shipping_method_input])) {
+            if (!$shipping_selected && !isset($shipping_methods[$shipping_method_input])) {
                 throw new Exception('Metode pengiriman tidak valid. Pilih Standard atau Express.');
             }
             $shipping_method = $shipping_methods[$shipping_method_input];
@@ -233,19 +320,31 @@ final class Palma_Rotan_Commerce_Bridge {
                 $order->add_item($line);
             }
 
-            $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
-            $usd = $base[$country] ?? 55;
-            if ($shipping_method_input === 'express') $usd *= 1.7;
-            $shipping_total = round($usd * $rate);
+            if ($shipping_selected) {
+                $shipping_total = (float)$shipping_selected['priceIdr'];
+                $shipping_method = (string)$shipping_selected['serviceName'];
+                $shipping_carrier = (string)$shipping_selected['courierName'];
+                $shipping_service_code = (string)$shipping_selected['serviceCode'];
+            } else {
+                $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
+                $usd = $base[$country] ?? 55;
+                if ($shipping_method_input === 'express') $usd *= 1.7;
+                $shipping_total = round($usd * $rate);
+                $shipping_method = $shipping_methods[$shipping_method_input];
+                $shipping_carrier = $country === 'ID' ? 'J&T' : 'DHL';
+                $shipping_service_code = '';
+            }
             $item = new WC_Order_Item_Shipping();
-            $item->set_method_title($shipping_method . ' · ' . ($country === 'ID' ? 'J&T' : 'DHL'));
-            $item->set_method_id('palma_' . sanitize_key($shipping_method));
+            $item->set_method_title($shipping_method . ' · ' . $shipping_carrier);
+            $item->set_method_id('palma_' . sanitize_key($shipping_selected ? $shipping_selected['serviceCode'] : $shipping_method));
             $item->set_total($shipping_total);
             $order->add_item($item);
 
             $order->update_meta_data('_palma_currency', $currency);
-            $order->update_meta_data('_palma_shipping_carrier', $country === 'ID' ? 'J&T' : 'DHL');
+            $order->update_meta_data('_palma_shipping_carrier', $shipping_carrier);
             $order->update_meta_data('_palma_shipping_method', $shipping_method);
+            $order->update_meta_data('_palma_shipping_service_code', $shipping_service_code);
+            $order->update_meta_data('_palma_shipping_quote_id', $shipping_quote_id);
             $order->calculate_totals();
             $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total()));
             $order->save();
@@ -839,6 +938,10 @@ final class Palma_Rotan_Commerce_Bridge {
         register_setting('palma_bridge','palma_usd_idr_rate',['sanitize_callback'=>'floatval']);
         register_setting('palma_bridge','palma_worker_sync_url',['sanitize_callback'=>'esc_url_raw']);
         register_setting('palma_bridge','palma_worker_sync_secret',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_api_key',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_origin_postal',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_domestic_couriers',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_export_couriers',['sanitize_callback'=>'sanitize_text_field']);
     }
 
     public static function admin_page() {
@@ -877,7 +980,7 @@ final class Palma_Rotan_Commerce_Bridge {
         }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
-        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>PALMA Worker Sync URL</th><td><input class="regular-text" type="url" name="palma_worker_sync_url" value="'.esc_attr(get_option('palma_worker_sync_url','https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order')).'" placeholder="https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order"><p class="description">Endpoint Worker untuk menerima order PAID dari WooCommerce.</p></td></tr><tr><th>PALMA Worker Sync Secret</th><td><input class="regular-text" type="password" name="palma_worker_sync_secret" value="'.esc_attr(get_option('palma_worker_sync_secret','')).'" autocomplete="new-password"><p class="description">Harus sama dengan secret Worker. Jangan dibagikan.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
+        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>PALMA Worker Sync URL</th><td><input class="regular-text" type="url" name="palma_worker_sync_url" value="'.esc_attr(get_option('palma_worker_sync_url','https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order')).'" placeholder="https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order"><p class="description">Endpoint Worker untuk menerima order PAID dari WooCommerce.</p></td></tr><tr><th>PALMA Worker Sync Secret</th><td><input class="regular-text" type="password" name="palma_worker_sync_secret" value="'.esc_attr(get_option('palma_worker_sync_secret','')).'" autocomplete="new-password"><p class="description">Harus sama dengan secret Worker. Jangan dibagikan.</p></td></tr><tr><th>Biteship API Key</th><td><input class="regular-text" type="password" name="palma_biteship_api_key" value="'.esc_attr(get_option('palma_biteship_api_key','')).'" autocomplete="new-password"><p class="description">Simpan key di server WordPress. Jangan masukkan ke JavaScript atau GitHub.</p></td></tr><tr><th>Biteship origin postal</th><td><input class="regular-text" name="palma_biteship_origin_postal" value="'.esc_attr(get_option('palma_biteship_origin_postal','59464')).'"></td></tr><tr><th>Domestic couriers</th><td><input class="regular-text" name="palma_biteship_domestic_couriers" value="'.esc_attr(get_option('palma_biteship_domestic_couriers','jnt')).'"><p class="description">Default J&T: jnt</p></td></tr><tr><th>Export couriers</th><td><input class="regular-text" name="palma_biteship_export_couriers" value="'.esc_attr(get_option('palma_biteship_export_couriers','dhl')).'"><p class="description">Default DHL: dhl; layanan yang muncul mengikuti rute dan akun Biteship.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
         submit_button('Save Settings'); echo '</form></div>';
     }
 
