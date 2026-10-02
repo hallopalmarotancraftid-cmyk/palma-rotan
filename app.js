@@ -207,10 +207,12 @@ async function loadShippingRates(){
     quote.value=j.quoteId||'';
     const apply=()=>{const o=select.options[select.selectedIndex];if(!o)return;if(carrier)carrier.value=o.dataset.company||'';if(service)service.value=o.dataset.service||'';};
     select.onchange=apply; apply();
+    select.disabled=false;
     if(box)box.textContent=data.settings.language==='ID'?'Ongkir real dari Biteship':'Live shipping rates from Biteship';
   }catch(error){
     quote.value='';if(carrier)carrier.value='';if(service)service.value='';
-    select.innerHTML='<option value="Standard">Standard</option><option value="Express">Express</option>';
+    select.innerHTML='<option value="">Biteship shipping rate unavailable</option>';
+    select.disabled=true;
     const apiError=(error&&error.message)?String(error.message):'Biteship rates unavailable';
     if(box)box.textContent=data.settings.language==='ID'
       ?'Biteship gagal mengambil ongkir: '+apiError
@@ -229,6 +231,17 @@ async function createOrder(fd){
   const commerceMode=!!(window.PALMA_COMMERCE_BASE||'').trim();
   if(api){
     try{
+      if(commerceMode){
+        const quoteId=String(fd.get('shippingQuoteId')||'').trim();
+        const carrier=String(fd.get('shippingCarrier')||'').trim();
+        const service=String(fd.get('shippingServiceCode')||'').trim();
+        if(!quoteId||!carrier||!service){
+          await loadShippingRates();
+          throw new Error(data.settings.language==='ID'
+            ?'Ongkir Biteship belum tersedia. Masukkan kode pos dan pilih layanan pengiriman.'
+            :'Biteship shipping is not ready. Enter the postal code and select a shipping service.');
+        }
+      }
       const payload={
         currency,
         items:c.map(x=>{const p=data.products.find(p=>p.id===x.id);return {productId:x.id,sku:p?.sku||p?.sku_code||x.id,quantity:x.qty}}),
