@@ -86,8 +86,21 @@ final class Palma_Rotan_Commerce_Bridge {
                 $data = $result->get_data();
                 if (is_string($data)) {
                     $is_pdf = strpos($route, '/' . self::REST_NS . '/document-pdf/') === 0;
-                    header('Content-Type: ' . ($is_pdf ? 'application/pdf' : 'text/html; charset=utf-8'));
-                    if ($is_pdf) header('Content-Disposition: attachment');
+                    if ($is_pdf) {
+                        // PDF bytes must reach Chrome unchanged. Discard any output
+                        // accidentally produced by themes/plugins before this REST
+                        // response, then send an explicit length and no-sniff header.
+                        while (ob_get_level() > 0) {
+                            ob_end_clean();
+                        }
+                        header('Content-Type: application/pdf');
+                        header('Content-Disposition: attachment');
+                        header('Content-Length: ' . strlen($data));
+                        header('Content-Encoding: identity');
+                        header('X-Content-Type-Options: nosniff');
+                    } else {
+                        header('Content-Type: text/html; charset=utf-8');
+                    }
                     echo $data;
                     return true;
                 }
