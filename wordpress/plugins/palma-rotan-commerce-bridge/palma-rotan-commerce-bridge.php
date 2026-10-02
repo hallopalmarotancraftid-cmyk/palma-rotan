@@ -833,7 +833,20 @@ final class Palma_Rotan_Commerce_Bridge {
     public static function admin_page() {
         if (!current_user_can('manage_woocommerce')) return;
         $orders=wc_get_orders(['limit'=>30,'orderby'=>'date','order'=>'DESC']);
+        $sync_order_id = absint($_GET['sync_order'] ?? 0);
+        $sync_ok = isset($_GET['sync_ok']) ? (string) $_GET['sync_ok'] : '';
         echo '<div class="wrap"><h1>PALMA ROTAN — Orders</h1><p>WooCommerce adalah sumber order utama. Invoice dan Packing List dibuat otomatis setelah pembayaran berhasil.</p>';
+        if ($sync_order_id && $sync_ok !== '') {
+            $sync_order = wc_get_order($sync_order_id);
+            if ($sync_ok === '1') {
+                echo '<div class="notice notice-success is-dismissible"><p><strong>PALMA Sync berhasil.</strong> Order #'.esc_html($sync_order_id).' sudah diterima PALMA.</p></div>';
+            } else {
+                $sync_error = $sync_order ? (string) $sync_order->get_meta('_palma_sync_last_error') : '';
+                echo '<div class="notice notice-error"><p><strong>PALMA Sync gagal.</strong> Order #'.esc_html($sync_order_id).' belum masuk PALMA.</p>';
+                if ($sync_error !== '') echo '<p><code>'.esc_html($sync_error).'</code></p>';
+                echo '</div>';
+            }
+        }
         echo '<table class="widefat striped"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th>PALMA Sync</th><th>Courier</th><th>Tracking</th><th>Documents</th></tr></thead><tbody>';
         foreach($orders as $o){
             if($o->is_paid())self::ensure_documents($o);
@@ -847,7 +860,8 @@ final class Palma_Rotan_Commerce_Bridge {
             $syncUrl=wp_nonce_url(admin_url('admin-post.php?action=palma_sync_order&order_id='.$o->get_id()),'palma_sync_order_'.$o->get_id());
             $syncStatus=(string)$o->get_meta('_palma_sync_status');
             $label=$o->is_paid() && $tracking!=='' ? esc_url(rest_url(self::REST_NS.'/document-pdf/label/'.$o->get_id()).'?key='.$key) : '';
-            $syncCell = $o->is_paid() ? ($syncStatus === 'SYNCED' ? '<span style="color:#087f23;font-weight:600">SYNCED</span>' : '<a class="button button-small" href="'.esc_url($syncUrl).'">Sync PALMA</a>') : '<span style="color:#777">—</span>';
+            $syncError = (string) $o->get_meta('_palma_sync_last_error');
+            $syncCell = $o->is_paid() ? ($syncStatus === 'SYNCED' ? '<span style="color:#087f23;font-weight:600">SYNCED</span>' : '<a class="button button-small" href="'.esc_url($syncUrl).'">Sync PALMA</a>'.($syncError !== '' ? '<br><small style="color:#b32d2e">'.esc_html($syncError).'</small>' : '')) : '<span style="color:#777">—</span>';
             echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.$syncCell.'</td><td>'.esc_html($carrier?:'—').'</td><td><form method="post" action="'.esc_url($saveUrl).'"><input type="text" name="tracking_number" value="'.esc_attr($tracking).'" placeholder="Nomor resi" style="width:150px"><input type="url" name="tracking_url" value="'.esc_attr($trackUrl).'" placeholder="URL tracking (opsional untuk J&T)" style="width:180px"><button class="button button-small">Save</button></form></td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a> ':'').($label?'<a target="_blank" href="'.$label.'">Label</a>':'').'</td></tr>';
         }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
