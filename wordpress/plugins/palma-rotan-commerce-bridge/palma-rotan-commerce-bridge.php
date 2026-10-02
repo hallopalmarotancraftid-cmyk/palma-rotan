@@ -21,6 +21,7 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('admin_post_palma_save_tracking', [__CLASS__, 'save_tracking']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
+        add_action('wp_head', [__CLASS__, 'payment_page_styles']);
     }
 
     public static function routes() {
@@ -236,6 +237,7 @@ final class Palma_Rotan_Commerce_Bridge {
             // browser navigation below, not inside the cross-origin fetch.
             $order->update_status('pending', 'PALMA checkout created; awaiting payment.');
             $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
+            $gateways = WC()->payment_gateways()->payment_gateways();
             // WooCommerce's order-pay page decides which receipt/payment UI to render
             // from the order's saved payment method. The PALMA checkout calls the
             // gateway directly, so persist that method explicitly before redirecting.
@@ -305,6 +307,20 @@ final class Palma_Rotan_Commerce_Bridge {
         } catch (Throwable $e) {
             wp_die(esc_html($e->getMessage()));
         }
+    }
+
+    public static function payment_page_styles() {
+        if (!function_exists('is_wc_endpoint_url') || !is_wc_endpoint_url('order-pay')) return;
+        echo '<style id="palma-payment-page-cleanup">
+        /* Payment page is a dedicated transaction screen; the theme cart icon is not needed here. */
+        body.woocommerce-order-pay .site-header-cart,
+        body.woocommerce-order-pay .cart-contents,
+        body.woocommerce-order-pay .woocommerce-cart-link,
+        body.woocommerce-order-pay .header-cart,
+        body.woocommerce-order-pay .header-cart-icon,
+        body.woocommerce-order-pay .wc-block-mini-cart,
+        body.woocommerce-order-pay a[href*="/cart/"] { display:none !important; }
+        </style>';
     }
 
     private static function authorize_order($order, WP_REST_Request $request) {
