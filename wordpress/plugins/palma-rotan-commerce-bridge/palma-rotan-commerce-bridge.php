@@ -445,10 +445,14 @@ final class Palma_Rotan_Commerce_Bridge {
 
     private static function send_order_to_palma($order, $from_retry = false) {
         if (!$order || !$order->is_paid()) return false;
-        $url = trim((string) get_option('palma_worker_sync_url', ''));
+        $url = trim((string) get_option('palma_worker_sync_url', 'https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order'));
         $secret = trim((string) get_option('palma_worker_sync_secret', ''));
         if ($url === '' || $secret === '') {
-            $order->add_order_note('PALMA sync belum dikonfigurasi: Worker Sync URL/Secret kosong.');
+            $message = 'PALMA sync belum dikonfigurasi: Worker Sync URL/Secret kosong.';
+            $order->update_meta_data('_palma_sync_status', 'RETRY');
+            $order->update_meta_data('_palma_sync_last_error', $message);
+            $order->add_order_note($message);
+            $order->save();
             return false;
         }
         if ((string) $order->get_meta('_palma_sync_status') === 'SYNCED') return true;
@@ -581,7 +585,14 @@ final class Palma_Rotan_Commerce_Bridge {
             return true;
         }
 
-        $message = is_array($data) && !empty($data['error']) ? (string) $data['error'] : 'PALMA sync HTTP '.$code;
+        $raw_response = trim((string) wp_remote_retrieve_body($response));
+        if (is_array($data) && !empty($data['error'])) {
+            $message = (string) $data['error'];
+        } elseif ($raw_response !== '') {
+            $message = 'PALMA sync HTTP '.$code.': '.substr(preg_replace('/\\s+/', ' ', wp_strip_all_tags($raw_response)), 0, 450);
+        } else {
+            $message = 'PALMA sync HTTP '.$code.' tanpa response body.';
+        }
         $order->update_meta_data('_palma_sync_status', 'RETRY');
         $order->update_meta_data('_palma_sync_last_error', substr($message, 0, 500));
         $order->save();
@@ -866,7 +877,7 @@ final class Palma_Rotan_Commerce_Bridge {
         }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
-        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>PALMA Worker Sync URL</th><td><input class="regular-text" type="url" name="palma_worker_sync_url" value="'.esc_attr(get_option('palma_worker_sync_url','')).'" placeholder="https://palma-rotan.pages.dev/api/integrations/woocommerce/order"><p class="description">Endpoint Worker untuk menerima order PAID dari WooCommerce.</p></td></tr><tr><th>PALMA Worker Sync Secret</th><td><input class="regular-text" type="password" name="palma_worker_sync_secret" value="'.esc_attr(get_option('palma_worker_sync_secret','')).'" autocomplete="new-password"><p class="description">Harus sama dengan secret Worker. Jangan dibagikan.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
+        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>PALMA Worker Sync URL</th><td><input class="regular-text" type="url" name="palma_worker_sync_url" value="'.esc_attr(get_option('palma_worker_sync_url','https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order')).'" placeholder="https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev/api/integrations/woocommerce/order"><p class="description">Endpoint Worker untuk menerima order PAID dari WooCommerce.</p></td></tr><tr><th>PALMA Worker Sync Secret</th><td><input class="regular-text" type="password" name="palma_worker_sync_secret" value="'.esc_attr(get_option('palma_worker_sync_secret','')).'" autocomplete="new-password"><p class="description">Harus sama dengan secret Worker. Jangan dibagikan.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
         submit_button('Save Settings'); echo '</form></div>';
     }
 
