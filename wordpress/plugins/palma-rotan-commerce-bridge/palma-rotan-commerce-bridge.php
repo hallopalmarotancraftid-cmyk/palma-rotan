@@ -320,19 +320,31 @@ final class Palma_Rotan_Commerce_Bridge {
                 $order->add_item($line);
             }
 
-            $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
-            $usd = $base[$country] ?? 55;
-            if ($shipping_method_input === 'express') $usd *= 1.7;
-            $shipping_total = round($usd * $rate);
+            if ($shipping_selected) {
+                $shipping_total = (float)$shipping_selected['priceIdr'];
+                $shipping_method = (string)$shipping_selected['serviceName'];
+                $shipping_carrier = (string)$shipping_selected['courierName'];
+                $shipping_service_code = (string)$shipping_selected['serviceCode'];
+            } else {
+                $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
+                $usd = $base[$country] ?? 55;
+                if ($shipping_method_input === 'express') $usd *= 1.7;
+                $shipping_total = round($usd * $rate);
+                $shipping_method = $shipping_methods[$shipping_method_input];
+                $shipping_carrier = $country === 'ID' ? 'J&T' : 'DHL';
+                $shipping_service_code = '';
+            }
             $item = new WC_Order_Item_Shipping();
-            $item->set_method_title($shipping_method . ' · ' . ($country === 'ID' ? 'J&T' : 'DHL'));
-            $item->set_method_id('palma_' . sanitize_key($shipping_method));
+            $item->set_method_title($shipping_method . ' · ' . $shipping_carrier);
+            $item->set_method_id('palma_' . sanitize_key($shipping_selected ? $shipping_selected['serviceCode'] : $shipping_method));
             $item->set_total($shipping_total);
             $order->add_item($item);
 
             $order->update_meta_data('_palma_currency', $currency);
-            $order->update_meta_data('_palma_shipping_carrier', $country === 'ID' ? 'J&T' : 'DHL');
+            $order->update_meta_data('_palma_shipping_carrier', $shipping_carrier);
             $order->update_meta_data('_palma_shipping_method', $shipping_method);
+            $order->update_meta_data('_palma_shipping_service_code', $shipping_service_code);
+            $order->update_meta_data('_palma_shipping_quote_id', $shipping_quote_id);
             $order->calculate_totals();
             $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total()));
             $order->save();
