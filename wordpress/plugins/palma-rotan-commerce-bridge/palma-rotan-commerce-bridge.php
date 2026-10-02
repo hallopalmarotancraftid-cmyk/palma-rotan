@@ -653,7 +653,7 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
         $pdf.="xref\n0 ".$size."\n0000000000 65535 f \n";
         for($i=1;$i<$size;$i++) $pdf.=sprintf('%010d 00000 n \n',$offsets[$i]);
         $pdf.="trailer\n<< /Size ".$size." /Root 1 0 R >>\nstartxref\n".$xref."\n%%EOF";
-
+        return $pdf;
     }
 
     public static function documents_on_paid($order_id) {
