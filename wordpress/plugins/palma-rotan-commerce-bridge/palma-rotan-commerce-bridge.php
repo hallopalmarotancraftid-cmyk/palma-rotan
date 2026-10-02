@@ -580,31 +580,8 @@ final class Palma_Rotan_Commerce_Bridge {
         $barcodeData=strtoupper($order->get_order_number().'-'.$number.'-'.$order->get_order_key());
         $barcodeData=preg_replace('/[^A-Z0-9 .\\-\\$\\/\\+%]/','',$barcodeData);
         $barcodeJson=wp_json_encode($barcodeData);
-        $barcodeScript='
-        <script>
-        (function(){
-          var value='.$barcodeJson.';
-          var patterns={
-            "0":"101001101101","1":"110100101011","2":"101100101011","3":"110110010101","4":"101001101011","5":"110100110101","6":"101100110101","7":"101001011011","8":"110100101101","9":"101100101101",
-            "A":"110101001011","B":"101101001011","C":"110110100101","D":"101011001011","E":"110101100101","F":"101101100101","G":"101010011011","H":"110101001101","I":"101101001101","J":"101011001101",
-            "K":"110101010011","L":"101101010011","M":"110110101001","N":"101011010011","O":"110101101001","P":"101101101001","Q":"101010110011","R":"110101011001","S":"101101011001","T":"101011011001",
-            "U":"110010101011","V":"100110101011","W":"110011010101","X":"100101101011","Y":"110010110101","Z":"100110110101",
-            "-":"100101011011",".":"110010101101"," ":"100110101101","$":"100100100101","/":"100100101001","+":"100101001001","%":"101001001001","*":"100101101101"
-          };
-          value="*"+value+"*";
-          var svg=document.getElementById("palmaBarcode");
-          if(!svg)return;
-          var x=10, unit=2, h=70, parts=[];
-          for(var c of value){
-            var p=patterns[c]||patterns["-"];
-            for(var i=0;i<p.length;i++){if(p[i]==="1")parts.push("<rect x='"+x+"' y='5' width='"+unit+"' height='"+h+"'/>");x+=unit;}
-            x+=unit;
-          }
-          svg.setAttribute("viewBox","0 0 "+(x+10)+" 110");
-          svg.innerHTML=parts.join("")+"<text x='10' y='100' font-family='monospace' font-size='11'>"+value.slice(1,-1).replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</text>";
-        })();
-        </script>';
-        $html.='<div class="barcode"><svg id="palmaBarcode" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Order barcode"></svg></div><div class="meta">Order authentication barcode: '.esc_html($barcodeData).'</div>'.$barcodeScript;
+        $barcodeScript='';
+        $html.='<div class="meta">Order authentication barcode: '.esc_html($barcodeData).'</div>';
         if($invoice){$html.='<div class="total"><div><span>Subtotal</span><span>'.wp_kses_post(wc_price($order->get_subtotal(),['currency'=>$currency])).'</span></div><div><span>Shipping</span><span>'.wp_kses_post(wc_price($order->get_shipping_total(),['currency'=>$currency])).'</span></div><div class="grand"><span>TOTAL</span><span>'.wp_kses_post($order->get_formatted_order_total()).'</span></div></div>';}
         $html.='<div class="footer">PALMA ROTAN · Handcrafted in Indonesia · Print / Save PDF from your browser.</div><p><button onclick="window.print()">Print / Save PDF</button></p></main></body></html>';
         return $html;
