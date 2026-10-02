@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-01-invoice-qr-product-fix-7";
+var BUILD_ID = "2026-10-02-woocommerce-sync-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -366,6 +366,155 @@ async function createOrder(request, env) {
   return json({ orderId, orderNumber, currency, subtotal, shippingAmount: shipping, shippingCarrier, shippingMethod: requestedShippingMethod, total, adminTotalIdr }, 201, cors(request));
 }
 __name(createOrder, "createOrder");
+async function ensureWooCommerceSyncSchema(env){
+  const cols=[
+    ["source_system","TEXT"],
+    ["source_order_id","TEXT"],
+    ["source_order_number","TEXT"],
+    ["source_idempotency_key","TEXT"],
+    ["source_synced_at","TEXT"],
+    ["source_payload_hash","TEXT"]
+  ];
+  const info=await env.DB.prepare("PRAGMA table_info(orders)").all();
+  const existing=new Set((info.results||[]).map(x=>x.name));
+  for(const [col,type] of cols){
+    if(existing.has(col))continue;
+    try{await env.DB.prepare("ALTER TABLE orders ADD COLUMN "+col+" "+type).run()}
+    catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}
+  }
+  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_source_ref ON orders(source_system,source_order_id)").run();
+  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_source_idempotency ON orders(source_idempotency_key) WHERE source_idempotency_key IS NOT NULL").run();
+}
+
+async function wooCommerceOrderSync(request,env){
+  await ensureShippingSchema(env);
+  await ensureProductLogisticsSchema(env);
+  await ensureWooCommerceSyncSchema(env);
+  const secret=String(env.WOOCOMMERCE_BRIDGE_SECRET||"").trim();
+  if(!secret)return json({error:"WOOCOMMERCE_BRIDGE_SECRET belum dikonfigurasi"},503,cors(request));
+  const raw=await request.text();
+  const signature=String(request.headers.get("x-palma-signature")||"").trim().replace(/^sha256=/i,"");
+  const expected=await hmacHex(secret,raw);
+  if(!timingSafeEqualHex(signature,expected))return json({error:"Invalid WooCommerce signature"},401,cors(request));
+  let body;
+  try{body=JSON.parse(raw)}catch{return json({error:"Payload WooCommerce bukan JSON valid"},400,cors(request))}
+  if(String(body.source||"").toLowerCase()!=="woocommerce")return json({error:"Source harus woocommerce"},400,cors(request));
+  if(String(body.paymentStatus||"").toUpperCase()!=="PAID")return json({error:"Order belum PAID"},409,cors(request));
+
+  const sourceOrderId=String(body.sourceOrderId||"").trim();
+  const sourceOrderNumber=String(body.sourceOrderNumber||sourceOrderId).trim();
+  const idempotencyKey=String(request.headers.get("x-palma-idempotency-key")||body.idempotencyKey||"").trim();
+  if(!sourceOrderId||!idempotencyKey)return json({error:"sourceOrderId dan idempotencyKey wajib diisi"},400,cors(request));
+
+  const existing=await env.DB.prepare("SELECT id,order_number,source_order_id,payment_status,order_status FROM orders WHERE source_system='woocommerce' AND source_order_id=? LIMIT 1").bind(sourceOrderId).first();
+  if(existing)return json({ok:true,duplicate:true,palmaOrderId:existing.id,palmaOrderNumber:existing.order_number,paymentStatus:existing.payment_status,orderStatus:existing.order_status},200,cors(request));
+  const idemExisting=await env.DB.prepare("SELECT id,order_number FROM orders WHERE source_idempotency_key=? LIMIT 1").bind(idempotencyKey).first();
+  if(idemExisting)return json({ok:true,duplicate:true,palmaOrderId:idemExisting.id,palmaOrderNumber:idemExisting.order_number},200,cors(request));
+
+  const customerEmail=String(body.customer?.email||"").trim().toLowerCase()||null;
+  let customerId=null;
+  if(customerEmail)customerId=(await env.DB.prepare("SELECT id FROM customers WHERE lower(email)=? LIMIT 1").bind(customerEmail).first())?.id||null;
+  if(!customerId){
+    customerId=id("cus");
+    await env.DB.prepare("INSERT INTO customers(id,email,first_name,last_name,phone,country) VALUES(?,?,?,?,?,?)").bind(
+      customerId,customerEmail,body.customer?.firstName||"",body.customer?.lastName||"",body.customer?.phone||"",body.customer?.country||""
+    ).run();
+  }else{
+    await env.DB.prepare("UPDATE customers SET first_name=?,last_name=?,phone=?,country=? WHERE id=?").bind(
+      body.customer?.firstName||"",body.customer?.lastName||"",body.customer?.phone||"",body.customer?.country||"",customerId
+    ).run();
+  }
+
+  const orderId=id("ord");
+  const orderNumber="PR-WC-"+sourceOrderNumber.replace(/[^A-Z0-9_-]/gi,"").slice(0,40);
+  const currency=String(body.currency||"IDR").toUpperCase();
+  const subtotal=Number(body.subtotal)||0;
+  const shippingAmount=Number(body.shippingAmount)||0;
+  const total=Number(body.total)||0;
+  const country=String(body.shippingAddress?.country||body.customer?.country||"").trim();
+  const carrier=String(body.shipping?.carrier||shippingCarrierForCountry(country)).trim().toUpperCase();
+  const shippingMethod=String(body.shipping?.method||"").trim();
+  const address=JSON.stringify({
+    firstName:body.shippingAddress?.firstName||"",
+    lastName:body.shippingAddress?.lastName||"",
+    address:body.shippingAddress?.address||"",
+    address2:body.shippingAddress?.address2||"",
+    city:body.shippingAddress?.city||"",
+    province:body.shippingAddress?.province||"",
+    postalCode:body.shippingAddress?.postalCode||"",
+    country
+  });
+  const rate=currency==="USD"?Number(body.total)&&Number(body.adminTotalIdr)?Number(body.adminTotalIdr)/total:16000:1;
+  const adminTotalIdr=Math.round(Number(body.adminTotalIdr||total*rate));
+  const payloadHash=await sha256(raw);
+  const statements=[
+    env.DB.prepare("INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_address_json,payment_status,order_status,source_system,source_order_id,source_order_number,source_idempotency_key,source_synced_at,source_payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PAID','PROCESSING',?,?,?,?,?,?)").bind(
+      orderId,orderNumber,customerId,currency,subtotal,shippingAmount,total,rate,adminTotalIdr,shippingMethod,address,"woocommerce",sourceOrderId,sourceOrderNumber,idempotencyKey,new Date().toISOString(),payloadHash
+    ),
+    env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),orderId,"PROCESSING","WooCommerce order PAID berhasil diterima otomatis.")
+  ];
+
+  const items=Array.isArray(body.items)?body.items:[];
+  if(!items.length)return json({error:"Order WooCommerce tidak memiliki item"},400,cors(request));
+  const itemStatements=[];
+  for(const item of items){
+    const sourceProductId=String(item.sourceProductId||item.sku||item.name||crypto.randomUUID()).trim();
+    const productId="wc-"+sourceProductId.replace(/[^A-Za-z0-9_-]/g,"").slice(0,80);
+    const sku=String(item.sku||sourceProductId).slice(0,100);
+    const name=String(item.name||sku).slice(0,255);
+    const qty=Math.max(1,Number(item.quantity)||1);
+    const unitPrice=Number(item.unitPrice)||0;
+    const lineTotal=Number(item.lineTotal)||unitPrice*qty;
+    itemStatements.push(env.DB.prepare("INSERT INTO products(id,sku,type,category,stock,moq,weight_kg,dimensions_cm,active) VALUES(?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku,weight_kg=excluded.weight_kg,dimensions_cm=excluded.dimensions_cm,updated_at=CURRENT_TIMESTAMP").bind(
+      productId,sku,"retail","woocommerce",0,1,Number(item.weightKg)||0,String(item.dimensionsCm||"")
+    ));
+    itemStatements.push(env.DB.prepare("INSERT INTO product_translations(product_id,language,name,description) VALUES(?,?,?,?) ON CONFLICT(product_id,language) DO UPDATE SET name=excluded.name").bind(productId,"en",name,"WooCommerce product"));
+    itemStatements.push(env.DB.prepare("INSERT INTO product_prices(product_id,currency,amount) VALUES(?,?,?) ON CONFLICT(product_id,currency) DO UPDATE SET amount=excluded.amount").bind(productId,currency,unitPrice));
+    itemStatements.push(env.DB.prepare("INSERT INTO order_items(id,order_id,product_id,product_name,quantity,unit_price,currency,total_price) VALUES(?,?,?,?,?,?,?,?)").bind(
+      id("item"),orderId,productId,name,qty,unitPrice,currency,lineTotal
+    ));
+  }
+  const payment=body.payment||{};
+  const transactionId=String(payment.transactionId||"").trim()||null;
+  statements.push(env.DB.prepare("INSERT INTO payments(id,order_id,provider,method,provider_transaction_id,amount,currency,status,verified_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(
+    id("pay"),orderId,"woocommerce",payment.method||"gateway",transactionId,Number(payment.amount||total)||total,currency,"PAID"
+  ));
+  const invoiceNo=String(body.documents?.invoiceNumber||("INV-PR-"+new Date().getFullYear()+"-"+crypto.randomUUID().slice(0,8).toUpperCase()));
+  const packingNo=String(body.documents?.packingNumber||("PK-PR-"+new Date().getFullYear()+"-"+crypto.randomUUID().slice(0,8).toUpperCase()));
+  const packageCount=Math.max(1,items.reduce((sum,x)=>sum+Math.max(1,Math.ceil(Number(x.quantity||0))),0));
+  const netWeight=items.reduce((sum,x)=>sum+(Number(x.weightKg)||0)*(Number(x.quantity)||0),0);
+  const authCode=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16);
+  statements.push(env.DB.prepare("INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)").bind(id("inv"),orderId,invoiceNo));
+  statements.push(env.DB.prepare("INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PACKING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(
+    id("pack"),orderId,packingNo,authCode,carrier,null,carrierTrackingUrl(carrier,null),packageCount,netWeight,netWeight
+  ));
+  statements.push(...itemStatements);
+  try{await env.DB.batch(statements)}catch(error){
+    const duplicate=String(error?.message||error).match(/UNIQUE|constraint/i);
+    if(duplicate){
+      const row=await env.DB.prepare("SELECT id,order_number FROM orders WHERE source_idempotency_key=? OR (source_system='woocommerce' AND source_order_id=?) LIMIT 1").bind(idempotencyKey,sourceOrderId).first();
+      if(row)return json({ok:true,duplicate:true,palmaOrderId:row.id,palmaOrderNumber:row.order_number},200,cors(request));
+    }
+    console.error("WOOCOMMERCE_SYNC_ERROR",{sourceOrderId,message:error?.message||String(error)});
+    return json({error:"Gagal menyimpan order WooCommerce ke PALMA"},500,cors(request));
+  }
+  return json({
+    ok:true,
+    duplicate:false,
+    palmaOrderId:orderId,
+    palmaOrderNumber:orderNumber,
+    sourceOrderId,
+    sourceOrderNumber,
+    paymentStatus:"PAID",
+    orderStatus:"PROCESSING",
+    invoiceNumber:invoiceNo,
+    packingNumber:packingNo,
+    shippingCarrier:carrier,
+    shippingMethod,
+    documents:body.documents||{}
+  },201,cors(request));
+}
+
 async function adminOrders(request, env) {
   await ensureShippingSchema(env);
   await ensureProductLogisticsSchema(env);
@@ -419,7 +568,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
       const packingNo = existing?.packing_number || `PK-PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
       const statements = [];
       if (!existing?.invoice_number) statements.push(env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"),orderId,invoiceNo));
-      if (!existing?.packing_number) statements.push(env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"),orderId,packingNo,crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16),shippingCarrier,null,carrierTrackingUrl(shippingCarrier,null),packageCount,grossWeight,netWeight));
+      if (!existing?.packing_number) statements.push(env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PACKING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"),orderId,packingNo,crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16),shippingCarrier,null,carrierTrackingUrl(shippingCarrier,null),packageCount,grossWeight,netWeight));
       if (statements.length) await env.DB.batch(statements);
       return { ok:true, alreadyPaid:true, order, invoiceNo, packingNo };
     }
@@ -468,7 +617,7 @@ async function markOrderPaid(orderId, payment, env, actor = "system") {
     env.DB.prepare(`UPDATE orders SET payment_status='PAID',order_status='PROCESSING',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status<>'PAID'`).bind(orderId),
     env.DB.prepare(`INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)`).bind(id("hist"), orderId, "PROCESSING", "Pembayaran terverifikasi; stok dikurangi otomatis"),
     env.DB.prepare(`INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)`).bind(id("inv"), orderId, invoiceNo),
-    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16), shippingCarrier, trackingNumber, carrierTrackingUrl(shippingCarrier,trackingNumber), packageCount, grossWeight, netWeight),
+    env.DB.prepare(`INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PACKING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(id("pack"), orderId, packingNo, crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16), shippingCarrier, trackingNumber, carrierTrackingUrl(shippingCarrier,trackingNumber), packageCount, grossWeight, netWeight),
     env.DB.prepare(`INSERT INTO payment_audit(id,order_id,payment_id,actor,action,metadata_json) VALUES(?,?,?,?,?,?)`).bind(
       id("pa"), orderId, paymentId, actor, "PAYMENT_VERIFIED",
       JSON.stringify({ provider: isMidtrans ? "midtrans" : "manual", method: payment.method || null, providerTransactionId: payment.providerTransactionId || null })
@@ -1407,6 +1556,7 @@ var index_default = {
     if (url.pathname === "/api/settings" && request.method === "GET") return publicSettings(request, env);
     if (url.pathname === "/api/orders" && request.method === "POST") return createOrder(request, env);
     if (url.pathname === "/api/admin/orders" && request.method === "GET") return adminOrders(request, env);
+    if (url.pathname === "/api/integrations/woocommerce/order" && request.method === "POST") return wooCommerceOrderSync(request, env);
     if (url.pathname === "/api/admin/shipping" && request.method === "POST") return adminShipping(request, env);
     const trackMatch = url.pathname.match(/^\/track\/([^/]+)\/([^/]+)$/);
     if (trackMatch && request.method === "GET") return publicTracking(request, env, decodeURIComponent(trackMatch[1]), decodeURIComponent(trackMatch[2]));
