@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.10
+ * Version: 1.0.11
  * Requires Plugins: woocommerce
  */
 
@@ -662,7 +662,13 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
         ];
         $value='*'.strtoupper($value).'*';
         $cmd='';
-        $unit=1.35; $h=42;
+        $unit=0.85; $h=38;
+        $modules=0;
+        for($n=0;$n<strlen($value);$n++){
+            $modules += strlen($patterns[$value[$n]]??$patterns['-']) + 1;
+        }
+        $totalWidth=$modules*$unit;
+        $x=max(42,(595-$totalWidth)/2);
         for($n=0;$n<strlen($value);$n++){
             $p=$patterns[$value[$n]]??$patterns['-'];
             for($i=0;$i<strlen($p);$i++){
@@ -722,7 +728,8 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
             $content.="ET ";
             if($pageIndex===count($chunks)-1){
                 $bx=42; $by=105;
-                $content.=self::pdf_barcode_commands($order->get_order_number().'-'.$number.'-'.$order->get_order_key(),$bx,$by);
+                $barcodeValue=$order->get_order_number().'-'.$number;
+                $content.=self::pdf_barcode_commands($barcodeValue,$bx,$by);
             }
             $streams[]=$content;
         }
