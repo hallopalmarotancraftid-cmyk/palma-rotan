@@ -20,6 +20,7 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('woocommerce_email_order_details', [__CLASS__, 'email_documents_note'], 20, 4);
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_post_palma_save_tracking', [__CLASS__, 'save_tracking']);
+        add_action('admin_post_palma_sync_order', [__CLASS__, 'manual_sync_order']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
         add_action('palma_sync_paid_order', [__CLASS__, 'run_scheduled_sync'], 10, 1);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
@@ -787,6 +788,21 @@ final class Palma_Rotan_Commerce_Bridge {
         add_menu_page('PALMA ROTAN Orders','PALMA Orders','manage_woocommerce','palma-orders',[__CLASS__,'admin_page'],'dashicons-store',56);
     }
 
+    public static function manual_sync_order() {
+        if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', '', ['response'=>403]);
+        $order_id = absint($_GET['order_id'] ?? 0);
+        check_admin_referer('palma_sync_order_'.$order_id);
+        $order = wc_get_order($order_id);
+        if (!$order) wp_die('Order tidak ditemukan.', '', ['response'=>404]);
+        if (!$order->is_paid()) wp_die('Hanya order PAID yang dapat disinkronkan ke PALMA.', '', ['response'=>400]);
+
+        $ok = self::send_order_to_palma($order, false);
+        $status = (string) $order->get_meta('_palma_sync_status');
+        $flag = $ok && $status === 'SYNCED' ? '1' : '0';
+        wp_safe_redirect(admin_url('admin.php?page=palma-orders&sync_order='.$order_id.'&sync_ok='.$flag));
+        exit;
+    }
+
     public static function save_tracking() {
         if (!current_user_can('manage_woocommerce')) wp_die('Forbidden', '', ['response'=>403]);
         $order_id=absint($_GET['order_id'] ?? 0);
@@ -818,7 +834,7 @@ final class Palma_Rotan_Commerce_Bridge {
         if (!current_user_can('manage_woocommerce')) return;
         $orders=wc_get_orders(['limit'=>30,'orderby'=>'date','order'=>'DESC']);
         echo '<div class="wrap"><h1>PALMA ROTAN — Orders</h1><p>WooCommerce adalah sumber order utama. Invoice dan Packing List dibuat otomatis setelah pembayaran berhasil.</p>';
-        echo '<table class="widefat striped"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th>Courier</th><th>Tracking</th><th>Documents</th></tr></thead><tbody>';
+        echo '<table class="widefat striped"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Payment</th><th>PALMA Sync</th><th>Courier</th><th>Tracking</th><th>Documents</th></tr></thead><tbody>';
         foreach($orders as $o){
             if($o->is_paid())self::ensure_documents($o);
             $key=rawurlencode($o->get_order_key());
@@ -828,6 +844,8 @@ final class Palma_Rotan_Commerce_Bridge {
             $carrier=(string)$o->get_meta('_palma_shipping_carrier');
             $trackUrl=(string)$o->get_meta('_palma_tracking_url');
             $saveUrl=wp_nonce_url(admin_url('admin-post.php?action=palma_save_tracking&order_id='.$o->get_id()),'palma_save_tracking_'.$o->get_id());
+            $syncUrl=wp_nonce_url(admin_url('admin-post.php?action=palma_sync_order&order_id='.$o->get_id()),'palma_sync_order_'.$o->get_id());
+            $syncStatus=(string)$o->get_meta('_palma_sync_status');
             $label=$o->is_paid() && $tracking!=='' ? esc_url(rest_url(self::REST_NS.'/document-pdf/label/'.$o->get_id()).'?key='.$key) : '';
             echo '<tr><td>#'.esc_html($o->get_order_number()).'</td><td>'.esc_html($o->get_billing_email()).'</td><td>'.esc_html($o->get_status()).'</td><td>'.($o->is_paid()?'PAID':'PENDING').'</td><td>'.esc_html($carrier?:'—').'</td><td><form method="post" action="'.esc_url($saveUrl).'"><input type="text" name="tracking_number" value="'.esc_attr($tracking).'" placeholder="Nomor resi" style="width:150px"><input type="url" name="tracking_url" value="'.esc_attr($trackUrl).'" placeholder="URL tracking (opsional untuk J&T)" style="width:180px"><button class="button button-small">Save</button></form></td><td>'.($inv?'<a target="_blank" href="'.$inv.'">Invoice</a> ':'').($pack?'<a target="_blank" href="'.$pack.'">Packing</a> ':'').($label?'<a target="_blank" href="'.$label.'">Label</a>':'').'</td></tr>';
         }
