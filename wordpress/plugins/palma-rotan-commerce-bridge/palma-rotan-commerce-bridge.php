@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.3.0
+ * Version: 1.3.1
  * Requires Plugins: woocommerce
  */
 
@@ -194,16 +194,47 @@ final class Palma_Rotan_Commerce_Bridge {
                 'height'=>max(1,(float)$product->get_height())
             ];
         }
+        // Biteship Rates requires realistic package data. WooCommerce products may
+        // legitimately have no shipping dimensions yet, so use conservative PALMA
+        // defaults instead of sending 1 gram / 1 cm values that can produce no quote.
+        foreach($prepared as &$item){
+            if((int)$item['weight']<100) $item['weight']=1000;
+            if((float)$item['length']<1) $item['length']=20;
+            if((float)$item['width']<1) $item['width']=20;
+            if((float)$item['height']<1) $item['height']=20;
+        }
+        unset($item);
+        $request_payload=[
+            'origin_postal_code'=>(int)$origin,
+            'destination_postal_code'=>(int)$postal,
+            'couriers'=>$couriers,
+            'items'=>$prepared
+        ];
         $response=wp_remote_post('https://api.biteship.com/v1/rates/couriers',[
-            'timeout'=>20,'blocking'=>true,
+            'timeout'=>30,'blocking'=>true,
             'headers'=>['Authorization'=>$apiKey,'Content-Type'=>'application/json','Accept'=>'application/json'],
-            'body'=>wp_json_encode(['origin_postal_code'=>(int)$origin,'destination_postal_code'=>(int)$postal,'couriers'=>$couriers,'items'=>$prepared],JSON_UNESCAPED_SLASHES),
+            'body'=>wp_json_encode($request_payload,JSON_UNESCAPED_SLASHES),
             'data_format'=>'body'
         ]);
-        if(is_wp_error($response))return self::error('Biteship Rates gagal: '.$response->get_error_message(),502);
+        if(is_wp_error($response)){
+            return self::error('Biteship Rates gagal: '.$response->get_error_message(),502);
+        }
         $code=(int)wp_remote_retrieve_response_code($response);
-        $data=json_decode((string)wp_remote_retrieve_body($response),true);
-        if($code<200||$code>=300||!is_array($data)||empty($data['success']))return self::error(is_array($data)&&!empty($data['message'])?(string)$data['message']:'Biteship Rates HTTP '.$code,502);
+        $raw=(string)wp_remote_retrieve_body($response);
+        $data=json_decode($raw,true);
+        if($code<200||$code>=300||!is_array($data)){
+            $message=is_array($data)?(string)($data['message']??$data['error']??''):'';
+            $apiCode=is_array($data)?(string)($data['code']??''):'';
+            $detail=$message!==''?$message:('Biteship Rates HTTP '.$code);
+            if($apiCode!=='')$detail.=' (code '.$apiCode.')';
+            return self::error($detail,502);
+        }
+        if(isset($data['success']) && !$data['success']){
+            $message=(string)($data['message']??$data['error']??'Biteship menolak request Rates.');
+            $apiCode=(string)($data['code']??'');
+            if($apiCode!=='')$message.=' (code '.$apiCode.')';
+            return self::error($message,502);
+        }
         $options=[];
         foreach((array)($data['pricing']??[]) as $p){
             $company=sanitize_key($p['company']??$p['courier_code']??'');
