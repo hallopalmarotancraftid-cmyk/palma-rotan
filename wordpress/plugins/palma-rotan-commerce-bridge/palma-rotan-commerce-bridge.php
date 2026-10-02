@@ -130,12 +130,14 @@ final class Palma_Rotan_Commerce_Bridge {
     public static function products() {
         if (!class_exists('WooCommerce')) return self::error('WooCommerce belum aktif.', 503);
         $products = wc_get_products(['status'=>'publish','limit'=>-1,'orderby'=>'date','order'=>'DESC']);
-        $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
         $out = [];
         foreach ($products as $p) {
-            $price_usd = (float) $p->get_regular_price();
+            // WooCommerce Regular Price is PALMA's IDR price. USD is a separate
+            // product field and is never inferred from the IDR price.
+            $price_usd = (float) get_post_meta($p->get_id(), '_palma_price_usd', true);
             $stored_idr = (float) get_post_meta($p->get_id(), '_palma_price_idr', true);
-            $price_idr = $stored_idr > 0 ? $stored_idr : ($price_usd > 0 ? $price_usd * $rate : 0);
+            $base_idr = (float) $p->get_regular_price();
+            $price_idr = $stored_idr > 0 ? $stored_idr : $base_idr;
             $out[] = [
                 'id' => (string) $p->get_id(),
                 'sku' => (string) $p->get_sku(),
