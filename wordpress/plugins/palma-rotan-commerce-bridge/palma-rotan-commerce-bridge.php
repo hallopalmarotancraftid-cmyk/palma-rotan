@@ -1022,3 +1022,4 @@ final class Palma_Rotan_Commerce_Bridge {
     private static function error($message,$status) { return self::cors(new WP_Error('palma_error',$message,['status'=>$status])); }
 }
 add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);
+// Build artifact: PALMA ROTAN Commerce Bridge v1.3.0
