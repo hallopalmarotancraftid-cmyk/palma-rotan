@@ -81,7 +81,9 @@ async function syncSettingsFromAPI() {
 }
 async function syncProductsFromAPI() {
   try {
-    const response = await fetch(`${PALMA_API_BASE}/api/products`, {
+    const commerceBase = (window.PALMA_COMMERCE_BASE || '').replace(/\/$/, '');
+    const productsUrl = commerceBase ? `${commerceBase}/wp-json/palma/v1/products` : `${PALMA_API_BASE}/api/products`;
+    const response = await fetch(productsUrl, {
       method: 'GET',
       headers: {
         'Accept': 'application/json'
@@ -126,35 +128,16 @@ async function syncProductsFromAPI() {
       return {
         id: p.id,
         sku: p.sku || p.id,
-
-        name: language === 'ID'
-          ? (p.name_id || p.name_en || '')
-          : (p.name_en || p.name_id || ''),
-
+        name: language === 'ID' ? (p.name_id || p.name_en || p.name || '') : (p.name_en || p.name_id || p.name || ''),
         type: p.type || 'Retail',
         category: p.category || 'all',
-
-        price: Number(
-          p.price_usd ?? p.price ?? 0
-        ),
-
-        stock: Number(p.stock ?? 0),
-
+        price: Number(p.price_usd ?? p.price ?? 0),
+        stock: p.stock == null ? 0 : Number(p.stock),
         moq: Number(p.moq ?? 1),
-
-        prices: {
-          IDR: Number(p.price_idr ?? 0),
-          USD: Number(p.price_usd ?? p.price ?? 0)
-        },
-
+        prices: { IDR: Number(p.price_idr ?? 0), USD: Number(p.price_usd ?? p.price ?? 0) },
         image,
-
-        description: language === 'ID'
-          ? (p.description_id || p.description_en || '')
-          : (p.description_en || p.description_id || ''),
-
+        description: language === 'ID' ? (p.description_id || p.description_en || p.description || '') : (p.description_en || p.description_id || p.description || ''),
         weight: Number(p.weight_kg ?? 0),
-
         dimensions: p.dimensions_cm || ''
       };
     });
