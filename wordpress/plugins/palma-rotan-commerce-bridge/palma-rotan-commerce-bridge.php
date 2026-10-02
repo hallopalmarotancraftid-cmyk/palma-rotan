@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.11
+ * Version: 1.0.12
  * Requires Plugins: woocommerce
  */
 
@@ -53,12 +53,12 @@ final class Palma_Rotan_Commerce_Bridge {
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'order'],
         ]);
-        register_rest_route(self::REST_NS, '/document/(?P<type>invoice|packing)/(?P<id>\d+)', [
+        register_rest_route(self::REST_NS, '/document/(?P<type>invoice|packing|label)/(?P<id>\d+)', [
             'methods' => 'GET',
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'document'],
         ]);
-        register_rest_route(self::REST_NS, '/document-pdf/(?P<type>invoice|packing)/(?P<id>\d+)', [
+        register_rest_route(self::REST_NS, '/document-pdf/(?P<type>invoice|packing|label)/(?P<id>\d+)', [
             'methods' => 'GET',
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'document_pdf'],
@@ -483,7 +483,38 @@ final class Palma_Rotan_Commerce_Bridge {
         return str_replace(['\\','(',')'],['\\\\','\\(','\\)'],$text);
     }
 
-    private static function pdf_barcode_commands($value,&$x,&$y) {
+    private static function pdf_qr_commands($value,$x,$y,$moduleSize=3,$pageWidth=595) {
+        if ($value === '') return '';
+        $lib=__DIR__.'/lib/phpqrcode.php';
+        if (!file_exists($lib)) return '';
+        try {
+            require_once $lib;
+            if (!class_exists('QRcode')) return '';
+            $matrix=QRcode::text((string)$value,false,QR_ECLEVEL_M,1,0);
+            if (!is_array($matrix) || !$matrix) return '';
+            $rows=count($matrix);
+            $cols=strlen((string)$matrix[0]);
+            $quiet=4;
+            $total=($cols+(2*$quiet))*$moduleSize;
+            $x=max(20,($pageWidth-$total)/2);
+            $cmd=$x.' '.$y.' '.$total.' '.$total.' re f ';
+            for($row=0;$row<$rows;$row++){
+                $line=(string)$matrix[$row];
+                for($col=0;$col<$cols;$col++){
+                    if(isset($line[$col]) && $line[$col]==='1'){
+                        $rx=$x+($quiet+$col)*$moduleSize;
+                        $ry=$y+($rows-1-$row+$quiet)*$moduleSize;
+                        $cmd.=$rx.' '.$ry.' '.$moduleSize.' '.$moduleSize.' re f ';
+                    }
+                }
+            }
+            return $cmd;
+        } catch (Throwable $e) {
+            return '';
+        }
+    }
+
+    private static function pdf_barcode_commands($value,&$x,&$y,$pageWidth=595) {
         $patterns=[
             '0'=>'101001101101','1'=>'110100101011','2'=>'101100101011','3'=>'110110010101','4'=>'101001101011','5'=>'110100110101','6'=>'101100110101','7'=>'101001011011','8'=>'110100101101','9'=>'101100101101',
             'A'=>'110101001011','B'=>'101101001011','C'=>'110110100101','D'=>'101011001011','E'=>'110101100101','F'=>'101101100101','G'=>'101010011011','H'=>'110101001101','I'=>'101101001101','J'=>'101011001101',
@@ -620,6 +651,7 @@ final class Palma_Rotan_Commerce_Bridge {
         $url=esc_url_raw(wp_unslash($_POST['tracking_url'] ?? ''));
         $carrier=(string)$order->get_meta('_palma_shipping_carrier');
         if($carrier==='') $carrier=strtoupper($order->get_shipping_country())==='ID'?'J&T':'DHL';
+        if($tracking!=='' && $url==='' && strtoupper($carrier)==='J&T') $url='https://www.jet.co.id/track?bills='.rawurlencode($tracking);
         $order->update_meta_data('_palma_tracking_number',$tracking);
         $order->update_meta_data('_palma_tracking_url',$url);
         $order->update_meta_data('_palma_shipping_carrier',$carrier);
@@ -668,7 +700,7 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
             $modules += strlen($patterns[$value[$n]]??$patterns['-']) + 1;
         }
         $totalWidth=$modules*$unit;
-        $x=max(42,(595-$totalWidth)/2);
+        $x=max(20,($pageWidth-$totalWidth)/2);
         for($n=0;$n<strlen($value);$n++){
             $p=$patterns[$value[$n]]??$patterns['-'];
             for($i=0;$i<strlen($p);$i++){
@@ -714,7 +746,6 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
             $lines[]='TOTAL: '.wp_strip_all_tags($order->get_formatted_order_total());
         }
         $lines[]='';
-        $lines[]='Order authentication barcode: '.$order->get_order_number().'-'.$number.'-'.$order->get_order_key();
 
         $streams=[];
         $perPage=34; $chunks=array_chunk($lines,$perPage);
@@ -726,10 +757,17 @@ add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);=>'100100100
                 $content.='('.$safe.") Tj ";
             }
             $content.="ET ";
-            if($pageIndex===count($chunks)-1){
-                $bx=42; $by=105;
-                $barcodeValue=$order->get_order_number().'-'.$number;
-                $content.=self::pdf_barcode_commands($barcodeValue,$bx,$by);
+            if($pageIndex===count($chunks)-1 && $type==='packing'){
+                $authValue=$order->get_order_number().'-'.$number.'-'.$order->get_order_key();
+                $content.=self::pdf_qr_commands($authValue,0,270,2.2,595);
+                $tracking=(string)$order->get_meta('_palma_tracking_number');
+                if($tracking!==''){
+                    $trackingUrl=(string)$order->get_meta('_palma_tracking_url');
+                    if($trackingUrl==='') $trackingUrl=strtoupper((string)$order->get_meta('_palma_shipping_carrier'))==='J&T'?'https://www.jet.co.id/track?bills='.rawurlencode($tracking):'';
+                    if($trackingUrl!=='') $content.=self::pdf_qr_commands($trackingUrl,0,150,2.2,595);
+                    $bx=42; $by=70;
+                    $content.=self::pdf_barcode_commands($tracking,$bx,$by,595);
+                }
             }
             $streams[]=$content;
         }
