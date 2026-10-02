@@ -131,8 +131,19 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->set_shipping_state(sanitize_text_field($shipping['province'] ?? ''));
             $order->set_shipping_postcode(sanitize_text_field($shipping['postalCode'] ?? ''));
 
-            $shipping_method = sanitize_text_field($body['shippingMethod'] ?? 'Standard');
+            $shipping_method_input = strtolower(trim(sanitize_text_field($body['shippingMethod'] ?? 'standard')));
+            $shipping_methods = [
+                'standard' => 'Standard',
+                'express' => 'Express',
+            ];
+            if (!isset($shipping_methods[$shipping_method_input])) {
+                throw new Exception('Metode pengiriman tidak valid. Pilih Standard atau Express.');
+            }
+            $shipping_method = $shipping_methods[$shipping_method_input];
             $country = strtoupper(sanitize_text_field($shipping['country'] ?? $customer['country'] ?? ''));
+            if (!preg_match('/^[A-Z]{2}$/', $country)) {
+                throw new Exception('Negara pengiriman tidak valid.');
+            }
             $currency = strtoupper(sanitize_text_field($body['currency'] ?? 'USD')) === 'IDR' ? 'IDR' : 'USD';
             $order->set_currency('IDR');
 
@@ -167,7 +178,7 @@ final class Palma_Rotan_Commerce_Bridge {
 
             $base = ['ID'=>6,'US'=>45,'CA'=>48,'GB'=>42,'AU'=>38,'SG'=>18,'DE'=>44,'FR'=>44,'NL'=>44];
             $usd = $base[$country] ?? 55;
-            if (strtolower($shipping_method) === 'express') $usd *= 1.7;
+            if ($shipping_method_input === 'express') $usd *= 1.7;
             $shipping_total = round($usd * $rate);
             $item = new WC_Order_Item_Shipping();
             $item->set_method_title($shipping_method . ' · ' . ($country === 'ID' ? 'J&T' : 'DHL'));
