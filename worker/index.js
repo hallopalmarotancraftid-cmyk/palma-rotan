@@ -328,12 +328,17 @@ async function createBiteshipShipmentSafe(orderId,env){
 }
 async function updateBiteshipWebhook(request,env){
   await ensureShippingSchema(env);
+  const raw=await request.text();
+  // Biteship validates a newly registered endpoint with an empty POST.
+  // Accept that validation request, while keeping signature verification
+  // mandatory for every non-empty webhook payload.
+  if(!raw.trim()) return json({ok:true,validation:true},200,cors(request));
   const secret=String(env.BITESHIP_WEBHOOK_SECRET||"").trim();
   const headerName=String(env.BITESHIP_WEBHOOK_HEADER||"x-biteship-webhook-secret").trim().toLowerCase();
   if(!secret)return json({error:"BITESHIP_WEBHOOK_SECRET belum dikonfigurasi"},503,cors(request));
   const provided=String(request.headers.get(headerName)||"").trim();
   if(!provided||provided!==secret)return json({error:"Invalid Biteship webhook secret"},401,cors(request));
-  const raw=await request.text(); let body={}; try{body=JSON.parse(raw)}catch{return json({error:"Payload webhook bukan JSON valid"},400,cors(request))}
+  let body={}; try{body=JSON.parse(raw)}catch{return json({error:"Payload webhook bukan JSON valid"},400,cors(request))}
   const providerOrderId=String(body.order_id||"").trim();
   const waybill=String(body.courier_waybill_id||"").trim()||null;
   const trackingId=String(body.courier_tracking_id||"").trim()||null;
