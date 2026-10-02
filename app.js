@@ -210,7 +210,11 @@ async function loadShippingRates(){
   }catch(error){
     quote.value='';if(carrier)carrier.value='';if(service)service.value='';
     select.innerHTML='<option value="Standard">Standard</option><option value="Express">Express</option>';
-    if(box)box.textContent=data.settings.language==='ID'?'Biteship belum aktif — gunakan ongkir fallback.':'Biteship is not active yet — fallback shipping is used.';
+    const apiError=(error&&error.message)?String(error.message):'Biteship rates unavailable';
+    if(box)box.textContent=data.settings.language==='ID'
+      ?'Biteship gagal mengambil ongkir: '+apiError
+      :'Biteship shipping rate request failed: '+apiError;
+    console.error('[PALMA ROTAN] Biteship shipping rates failed:',error);
   }
 }
 
