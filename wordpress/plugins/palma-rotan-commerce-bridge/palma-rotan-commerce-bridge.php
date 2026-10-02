@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Requires Plugins: woocommerce
  */
 
@@ -40,6 +40,11 @@ final class Palma_Rotan_Commerce_Bridge {
                 'permission_callback' => '__return_true',
                 'callback' => [__CLASS__, 'cors_options'],
             ],
+        ]);
+        register_rest_route(self::REST_NS, '/order/(?P<id>\d+)/pay', [
+            'methods' => 'GET',
+            'permission_callback' => '__return_true',
+            'callback' => [__CLASS__, 'pay_order'],
         ]);
         register_rest_route(self::REST_NS, '/order/(?P<id>\d+)', [
             'methods' => 'GET',
@@ -227,31 +232,11 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total()));
             $order->save();
 
-            // Keep the order auditable if payment initialization fails. WooCommerce can
-            // later recover/retry the pending order instead of silently losing it.
-            $order->update_status('pending', 'PALMA checkout created; awaiting payment gateway initialization.');
-
+            // Create the order first. The gateway redirect is performed by a normal
+            // browser navigation below, not inside the cross-origin fetch.
+            $order->update_status('pending', 'PALMA checkout created; awaiting payment.');
             $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
-            if ($payment_method === 'midtrans' && $gateway_id !== 'midtrans') {
-                // The configured WooCommerce gateway remains authoritative.
-                // 'midtrans' from the visitor is only an alias, not a forced gateway ID.
-            }
-            $payment_url = '';
-            $payment_token = '';
-            $gateways = WC()->payment_gateways()->payment_gateways();
-            if (!isset($gateways[$gateway_id])) {
-                throw new Exception('Payment gateway WooCommerce tidak ditemukan: '.$gateway_id);
-            }
-            if (!$gateways[$gateway_id]->is_available()) {
-                throw new Exception('Payment gateway WooCommerce tidak tersedia: '.$gateway_id);
-            }
-            $result = $gateways[$gateway_id]->process_payment($order->get_id());
-            if (!is_array($result) || empty($result['result']) || $result['result'] !== 'success') {
-                $message = is_array($result) ? sanitize_text_field($result['messages'] ?? '') : '';
-                throw new Exception($message ?: 'Payment gateway gagal membuat pembayaran.');
-            }
-            $payment_url = esc_url_raw($result['redirect'] ?? '');
-            if (!$payment_url) throw new Exception('Payment gateway tidak mengembalikan payment URL.');
+            $payment_url = add_query_arg(['key'=>$order->get_order_key()], rest_url(self::REST_NS . '/order/' . $order->get_id() . '/pay'));
 
             return self::cors(new WP_REST_Response([
                 'ok'=>true,
@@ -272,6 +257,25 @@ final class Palma_Rotan_Commerce_Bridge {
             ], 201));
         } catch (Throwable $e) {
             return self::error($e->getMessage(), 400);
+        }
+    }
+
+    public static function pay_order(WP_REST_Request $request) {
+        $order = wc_get_order((int)$request['id']);
+        if (!$order) return self::error('Order tidak ditemukan.', 404);
+        if (!self::authorize_order($order, $request)) return self::error('Order key tidak valid.', 403);
+        if ($order->is_paid()) { wp_safe_redirect(home_url('/')); exit; }
+        $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
+        $gateways = WC()->payment_gateways()->payment_gateways();
+        if (!isset($gateways[$gateway_id])) wp_die('Payment gateway WooCommerce tidak ditemukan.');
+        if (!$gateways[$gateway_id]->is_available()) wp_die('Payment gateway WooCommerce tidak tersedia.');
+        try {
+            $result = $gateways[$gateway_id]->process_payment($order->get_id());
+            if (!is_array($result) || ($result['result'] ?? '') !== 'success' || empty($result['redirect'])) wp_die('Payment gateway gagal membuat pembayaran.');
+            wp_safe_redirect(esc_url_raw($result['redirect']));
+            exit;
+        } catch (Throwable $e) {
+            wp_die(esc_html($e->getMessage()));
         }
     }
 
