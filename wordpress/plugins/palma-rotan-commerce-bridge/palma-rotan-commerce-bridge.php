@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.3.1
+ * Version: 1.3.2
  * Requires Plugins: woocommerce
  */
 
@@ -37,9 +37,16 @@ final class Palma_Rotan_Commerce_Bridge {
             'callback' => [__CLASS__, 'products'],
         ]);
         register_rest_route(self::REST_NS, '/shipping-rates', [
-            'methods' => 'POST',
-            'permission_callback' => '__return_true',
-            'callback' => [__CLASS__, 'shipping_rates'],
+            [
+                'methods' => 'POST',
+                'permission_callback' => '__return_true',
+                'callback' => [__CLASS__, 'shipping_rates'],
+            ],
+            [
+                'methods' => 'OPTIONS',
+                'permission_callback' => '__return_true',
+                'callback' => [__CLASS__, 'cors_options'],
+            ],
         ]);
         register_rest_route(self::REST_NS, '/order', [
             [
@@ -73,6 +80,10 @@ final class Palma_Rotan_Commerce_Bridge {
             'permission_callback' => '__return_true',
             'callback' => [__CLASS__, 'document_pdf'],
         ]);
+    }
+
+    public static function cors_options() {
+        return self::cors(new WP_REST_Response(['ok' => true], 200));
     }
 
     public static function serve_cors($served, $result, $request, $server) {
