@@ -150,7 +150,7 @@ final class Palma_Rotan_Commerce_Bridge {
                 if ($product->managing_stock() && $product->get_stock_quantity() < $qty) throw new Exception('Stok tidak mencukupi untuk '.$product->get_name());
                 $price_idr = (float) get_post_meta($product->get_id(), '_palma_price_idr', true);
                 $base_price = (float) $product->get_regular_price();
-                $unit_idr = $price_idr > 0 ? $price_idr : ($currency === 'USD' ? $base_price * $rate : $base_price);
+                $unit_idr = $price_idr > 0 ? $price_idr : ($base_price * $rate);
                 if ($unit_idr <= 0) throw new Exception('Harga produk tidak valid: '.$product->get_name());
                 $line = new WC_Order_Item_Product();
                 $line->set_product($product);
@@ -174,7 +174,7 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->update_meta_data('_palma_shipping_carrier', $country === 'ID' ? 'J&T' : 'DHL');
             $order->update_meta_data('_palma_shipping_method', $shipping_method);
             $order->calculate_totals();
-            $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total() * ($currency === 'USD' ? $rate : 1)));
+            $order->update_meta_data('_palma_admin_total_idr', (string) round($order->get_total()));
             $order->save();
 
             // Keep the order auditable if payment initialization fails. WooCommerce can
