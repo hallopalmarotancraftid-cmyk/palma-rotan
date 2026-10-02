@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.14
+ * Version: 1.1.0
  * Requires Plugins: woocommerce
  */
 
@@ -14,12 +14,14 @@ final class Palma_Rotan_Commerce_Bridge {
     public static function boot() {
         add_action('rest_api_init', [__CLASS__, 'routes']);
         add_action('woocommerce_payment_complete', [__CLASS__, 'documents_on_paid']);
+        add_action('woocommerce_payment_complete', [__CLASS__, 'sync_paid_order_to_palma'], 30);
         add_action('woocommerce_order_status_processing', [__CLASS__, 'documents_on_paid']);
         add_action('woocommerce_order_status_completed', [__CLASS__, 'documents_on_paid']);
         add_action('woocommerce_email_order_details', [__CLASS__, 'email_documents_note'], 20, 4);
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_post_palma_save_tracking', [__CLASS__, 'save_tracking']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
+        add_action('palma_sync_paid_order', [__CLASS__, 'run_scheduled_sync'], 10, 1);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
         add_action('wp_head', [__CLASS__, 'payment_page_styles']);
         add_filter('midtrans_snap_params_main_before_charge', [__CLASS__, 'midtrans_retry_order_id'], 10, 1);
@@ -424,6 +426,170 @@ final class Palma_Rotan_Commerce_Bridge {
         ];
     }
 
+    public static function sync_paid_order_to_palma($order_id) {
+        $order = wc_get_order((int) $order_id);
+        if (!$order || !$order->is_paid()) return;
+        self::send_order_to_palma($order, false);
+    }
+
+    public static function run_scheduled_sync($order_id) {
+        $order = wc_get_order((int) $order_id);
+        if (!$order || !$order->is_paid()) return;
+        self::send_order_to_palma($order, true);
+    }
+
+    private static function palma_hmac($secret, $body) {
+        return hash_hmac('sha256', $body, $secret);
+    }
+
+    private static function send_order_to_palma($order, $from_retry = false) {
+        if (!$order || !$order->is_paid()) return false;
+        $url = trim((string) get_option('palma_worker_sync_url', ''));
+        $secret = trim((string) get_option('palma_worker_sync_secret', ''));
+        if ($url === '' || $secret === '') {
+            $order->add_order_note('PALMA sync belum dikonfigurasi: Worker Sync URL/Secret kosong.');
+            return false;
+        }
+        if ((string) $order->get_meta('_palma_sync_status') === 'SYNCED') return true;
+        $idempotency = (string) $order->get_meta('_palma_sync_idempotency');
+        if ($idempotency === '') {
+            $idempotency = 'wc-' . $order->get_id() . '-' . substr(hash('sha256', $order->get_order_key()), 0, 16);
+            $order->update_meta_data('_palma_sync_idempotency', $idempotency);
+            $order->save();
+        }
+
+        $items = [];
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            $items[] = [
+                'sourceItemId' => (string) $item_id,
+                'sourceProductId' => $product ? (string) $product->get_id() : '',
+                'sku' => $product ? (string) $product->get_sku() : '',
+                'name' => (string) $item->get_name(),
+                'quantity' => (int) $item->get_quantity(),
+                'unitPrice' => (float) $order->get_item_total($item, false, false),
+                'lineTotal' => (float) $item->get_total(),
+                'weightKg' => $product ? (float) $product->get_weight() : 0,
+                'dimensionsCm' => $product ? trim($product->get_length().' × '.$product->get_width().' × '.$product->get_height(), ' ×') : '',
+            ];
+        }
+
+        $shipping_country = (string) $order->get_shipping_country();
+        $shipping_method = (string) $order->get_shipping_method();
+        $shipping_carrier = (string) $order->get_meta('_palma_shipping_carrier');
+        if ($shipping_carrier === '') $shipping_carrier = strtoupper($shipping_country) === 'ID' ? 'J&T' : 'DHL';
+
+        $payload = [
+            'source' => 'woocommerce',
+            'sourceOrderId' => (string) $order->get_id(),
+            'sourceOrderNumber' => (string) $order->get_order_number(),
+            'idempotencyKey' => $idempotency,
+            'createdAt' => $order->get_date_created() ? $order->get_date_created()->date('c') : gmdate('c'),
+            'currency' => (string) $order->get_currency(),
+            'subtotal' => (float) $order->get_subtotal(),
+            'shippingAmount' => (float) $order->get_shipping_total(),
+            'total' => (float) $order->get_total(),
+            'paymentStatus' => 'PAID',
+            'payment' => [
+                'provider' => 'woocommerce',
+                'method' => (string) ($order->get_payment_method() ?: 'gateway'),
+                'transactionId' => (string) $order->get_transaction_id(),
+                'paidAt' => $order->get_date_paid() ? $order->get_date_paid()->date('c') : gmdate('c'),
+                'amount' => (float) $order->get_total(),
+                'currency' => (string) $order->get_currency(),
+            ],
+            'customer' => [
+                'firstName' => (string) $order->get_billing_first_name(),
+                'lastName' => (string) $order->get_billing_last_name(),
+                'email' => (string) $order->get_billing_email(),
+                'phone' => (string) $order->get_billing_phone(),
+                'country' => (string) $order->get_billing_country(),
+            ],
+            'shippingAddress' => [
+                'firstName' => (string) $order->get_shipping_first_name(),
+                'lastName' => (string) $order->get_shipping_last_name(),
+                'address' => (string) $order->get_shipping_address_1(),
+                'address2' => (string) $order->get_shipping_address_2(),
+                'city' => (string) $order->get_shipping_city(),
+                'province' => (string) $order->get_shipping_state(),
+                'postalCode' => (string) $order->get_shipping_postcode(),
+                'country' => $shipping_country,
+            ],
+            'shipping' => [
+                'carrier' => $shipping_carrier,
+                'method' => $shipping_method,
+                'amount' => (float) $order->get_shipping_total(),
+            ],
+            'items' => $items,
+            'documents' => [
+                'invoiceNumber' => (string) $order->get_meta('_palma_invoice_number'),
+                'packingNumber' => (string) $order->get_meta('_palma_packing_number'),
+                'invoiceUrl' => self::document_pdf_url($order, 'invoice'),
+                'packingUrl' => self::document_pdf_url($order, 'packing'),
+                'labelUrl' => self::document_pdf_url($order, 'label'),
+            ],
+            'meta' => [
+                'orderKey' => (string) $order->get_order_key(),
+                'sourceSite' => home_url('/'),
+            ],
+        ];
+
+        $body = wp_json_encode($payload, JSON_UNESCAPED_SLASHES);
+        if (!is_string($body)) {
+            $order->update_meta_data('_palma_sync_status', 'FAILED');
+            $order->update_meta_data('_palma_sync_last_error', 'Gagal encode payload WooCommerce.');
+            $order->save();
+            return false;
+        }
+
+        $response = wp_remote_post(rtrim($url, '/'), [
+            'timeout' => 20,
+            'blocking' => true,
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+                'X-Palma-Signature' => self::palma_hmac($secret, $body),
+                'X-Palma-Idempotency-Key' => $idempotency,
+                'X-Palma-Source' => 'woocommerce',
+                'User-Agent' => 'PALMA-ROTAN-Commerce-Bridge/1.1.0',
+            ],
+            'body' => $body,
+            'data_format' => 'body',
+        ]);
+
+        if (is_wp_error($response)) {
+            $message = $response->get_error_message();
+            $order->update_meta_data('_palma_sync_status', 'RETRY');
+            $order->update_meta_data('_palma_sync_last_error', $message);
+            $order->save();
+            if (!$from_retry && !wp_next_scheduled('palma_sync_paid_order', [$order->get_id()])) {
+                wp_schedule_single_event(time() + 60, 'palma_sync_paid_order', [$order->get_id()]);
+            }
+            return false;
+        }
+
+        $code = (int) wp_remote_retrieve_response_code($response);
+        $data = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($code >= 200 && $code < 300 && is_array($data) && !empty($data['ok'])) {
+            $order->update_meta_data('_palma_sync_status', 'SYNCED');
+            $order->update_meta_data('_palma_sync_at', gmdate('c'));
+            $order->update_meta_data('_palma_sync_last_error', '');
+            if (!empty($data['palmaOrderId'])) $order->update_meta_data('_palma_order_id', sanitize_text_field($data['palmaOrderId']));
+            $order->add_order_note('Order PAID berhasil disinkronkan otomatis ke PALMA ROTAN.');
+            $order->save();
+            return true;
+        }
+
+        $message = is_array($data) && !empty($data['error']) ? (string) $data['error'] : 'PALMA sync HTTP '.$code;
+        $order->update_meta_data('_palma_sync_status', 'RETRY');
+        $order->update_meta_data('_palma_sync_last_error', substr($message, 0, 500));
+        $order->save();
+        if (!$from_retry && !wp_next_scheduled('palma_sync_paid_order', [$order->get_id()])) {
+            wp_schedule_single_event(time() + 60, 'palma_sync_paid_order', [$order->get_id()]);
+        }
+        return false;
+    }
+
     public static function documents_on_paid($order_id) {
         $order=wc_get_order($order_id);
         if (!$order || !$order->is_paid()) return;
@@ -644,6 +810,8 @@ final class Palma_Rotan_Commerce_Bridge {
         register_setting('palma_bridge','palma_allowed_origin',['sanitize_callback'=>'esc_url_raw']);
         register_setting('palma_bridge','palma_payment_gateway_id',['sanitize_callback'=>'sanitize_text_field']);
         register_setting('palma_bridge','palma_usd_idr_rate',['sanitize_callback'=>'floatval']);
+        register_setting('palma_bridge','palma_worker_sync_url',['sanitize_callback'=>'esc_url_raw']);
+        register_setting('palma_bridge','palma_worker_sync_secret',['sanitize_callback'=>'sanitize_text_field']);
     }
 
     public static function admin_page() {
@@ -665,7 +833,7 @@ final class Palma_Rotan_Commerce_Bridge {
         }
         echo '</tbody></table><h2>Integration</h2><form method="post" action="options.php">';
         settings_fields('palma_bridge');
-        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
+        echo '<table class="form-table"><tr><th>Cloudflare visitor origin</th><td><input class="regular-text" name="palma_allowed_origin" value="'.esc_attr(get_option('palma_allowed_origin','https://palma-rotan.pages.dev')).'"></td></tr><tr><th>Payment gateway ID</th><td><input class="regular-text" name="palma_payment_gateway_id" value="'.esc_attr(get_option('palma_payment_gateway_id','midtrans')).'"><p class="description">Gunakan ID gateway Midtrans yang benar setelah plugin payment terpasang.</p></td></tr><tr><th>PALMA Worker Sync URL</th><td><input class="regular-text" type="url" name="palma_worker_sync_url" value="<?php echo esc_attr(get_option('palma_worker_sync_url','')); ?>" placeholder="https://palma-rotan.pages.dev/api/integrations/woocommerce/order"><p class="description">Endpoint Worker untuk menerima order PAID dari WooCommerce.</p></td></tr><tr><th>PALMA Worker Sync Secret</th><td><input class="regular-text" type="password" name="palma_worker_sync_secret" value="<?php echo esc_attr(get_option('palma_worker_sync_secret','')); ?>" autocomplete="new-password"><p class="description">Harus sama dengan secret Worker. Jangan dibagikan.</p></td></tr><tr><th>USD → IDR rate</th><td><input class="regular-text" type="number" step="0.01" name="palma_usd_idr_rate" value="'.esc_attr(get_option('palma_usd_idr_rate',16000)).'"></td></tr></table>';
         submit_button('Save Settings'); echo '</form></div>';
     }
 
