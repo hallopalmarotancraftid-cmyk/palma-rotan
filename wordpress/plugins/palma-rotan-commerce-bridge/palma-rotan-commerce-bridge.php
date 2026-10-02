@@ -251,11 +251,21 @@ final class Palma_Rotan_Commerce_Bridge {
                 'total'=>(float)$item->get_total(),
             ];
         }
+        $currency = strtoupper((string) $order->get_meta('_palma_currency')) === 'IDR' ? 'IDR' : 'USD';
+        $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
+        $subtotal_idr = (float) $order->get_subtotal();
+        $shipping_idr = (float) $order->get_shipping_total();
+        $total_idr = (float) $order->get_total();
         return [
             'orderId'=>$order->get_id(),
             'orderNumber'=>$order->get_order_number(),
             'status'=>$order->get_status(),
             'paymentStatus'=>$order->is_paid() ? 'PAID' : 'PENDING',
+            'currency'=>$currency,
+            'paymentCurrency'=>'IDR',
+            'subtotalIdr'=>$subtotal_idr,
+            'shippingAmountIdr'=>$shipping_idr,
+            'totalIdr'=>$total_idr,
             'customer'=>[
                 'firstName'=>$order->get_billing_first_name(),
                 'email'=>$order->get_billing_email(),
@@ -263,9 +273,9 @@ final class Palma_Rotan_Commerce_Bridge {
                 'country'=>$order->get_billing_country(),
             ],
             'items'=>$items,
-            'subtotal'=>(float)$order->get_subtotal(),
-            'shippingAmount'=>(float)$order->get_shipping_total(),
-            'total'=>(float)$order->get_total(),
+            'subtotal'=>(float) ($currency === 'USD' ? $subtotal_idr / $rate : $subtotal_idr),
+            'shippingAmount'=>(float) ($currency === 'USD' ? $shipping_idr / $rate : $shipping_idr),
+            'total'=>(float) ($currency === 'USD' ? $total_idr / $rate : $total_idr),
             'shippingMethod'=>(string)$order->get_shipping_method(),
             'shippingCarrier'=>(string)$order->get_meta('_palma_shipping_carrier'),
             'trackingNumber'=>(string)$order->get_meta('_palma_tracking_number'),
