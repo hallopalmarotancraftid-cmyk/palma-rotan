@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-02-woocommerce-sync-1";
+var BUILD_ID = "2026-10-02-shipping-automation-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -346,7 +346,7 @@ async function updateBiteshipWebhook(request,env){
   const mapped=statusMap[normalized]||null;
   const finalWaybill=waybill||pack.tracking_number||null;
   const trackingUrlValue=String(body.courier_link||"").trim()||null;
-  await env.DB.prepare("UPDATE packing_orders SET provider_tracking_id=COALESCE(?,provider_tracking_id),tracking_number=COALESCE(?,tracking_number),tracking_url=COALESCE(?,tracking_url),status=COALESCE(?,status),shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END,shipping_error=NULL WHERE provider_order_id=?").bind(trackingId,finalWaybill,trackingUrlValue,mapped,statusMap[normalized]||"",statusMap[normalized]||"",providerOrderId).run();
+  await env.DB.prepare("UPDATE packing_orders SET provider_tracking_id=COALESCE(?,provider_tracking_id),tracking_number=COALESCE(?,tracking_number),tracking_url=COALESCE(?,tracking_url),status=COALESCE(?,status),shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END,shipping_error=NULL WHERE provider_order_id=?").bind(trackingId,finalWaybill,trackingUrlValue,mapped||null,mapped||null,mapped||null,providerOrderId).run();
   await env.DB.prepare("INSERT INTO tracking_events(id,order_id,tracking_number,status,event_time,location,description,source,raw_payload) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?,?,?,?,?)").bind(id("trackevt"),pack.order_id,finalWaybill,mapped||statusRaw,null,"Biteship shipment status update","biteship",raw).run();
   if(mapped) await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(mapped,pack.order_id).run();
   return json({ok:true,orderId:pack.order_id,status:mapped||statusRaw,trackingNumber:finalWaybill},200,cors(request));
@@ -813,8 +813,9 @@ async function adminShipping(request,env){
   if(!order)return json({error:"Order tidak ditemukan"},404,cors(request));
   const pack=await ensurePackingAuth(order.id,env);
   if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
-  const status=String(body.status||pack.status||"PENDING").toUpperCase();
-  const allowed=["PENDING","PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
+  const autoCreateShipment=body.autoCreateShipment===true;
+  const status=String(body.status||(autoCreateShipment?"READY TO SHIP":pack.status)||"PACKING").toUpperCase();
+  const allowed=["PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
   if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(request));
   const autoCreateShipment=body.autoCreateShipment===true;
   let trackingNumber=String(body.trackingNumber||"").trim()||null;
@@ -827,7 +828,6 @@ async function adminShipping(request,env){
     if(!result.ok)return json({ok:false,error:result.error||result.reason||"Gagal membuat shipment otomatis",code:"SHIPPING_PROVIDER_ERROR",shipmentMode:mode},409,cors(request));
     trackingNumber=result.trackingNumber||null;
     trackingUrlValue=result.trackingUrl||trackingUrlValue;
-    shipmentTest=mode==="SANDBOX";
   }
   if(!["J&T","DHL"].includes(courier))return json({error:"Kurir harus J&T untuk domestik atau DHL untuk ekspor"},400,cors(request));
   const country=String((await env.DB.prepare("SELECT json_extract(shipping_address_json,'$.country') AS country FROM orders WHERE id=?").bind(order.id).first())?.country||"").toLowerCase();
