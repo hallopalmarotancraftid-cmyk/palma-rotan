@@ -98,6 +98,19 @@ final class Palma_Rotan_Commerce_Bridge {
         if (!$items) return self::error('Produk wajib diisi.', 400);
         if (empty($customer['email']) || !is_email($customer['email'])) return self::error('Email customer tidak valid.', 400);
 
+        // Public checkout guard: limit repeated order creation attempts per email/IP.
+        // This is intentionally small so normal customers can retry a failed payment.
+        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown';
+        $fingerprint = 'palma_checkout_' . md5(strtolower(trim((string)$customer['email'])) . '|' . $ip);
+        $attempts = (int) get_transient($fingerprint);
+        if ($attempts >= 8) return self::error('Terlalu banyak percobaan checkout. Silakan coba lagi beberapa menit kemudian.', 429);
+        set_transient($fingerprint, $attempts + 1, 5 * MINUTE_IN_SECONDS);
+
+        $payment_method = strtolower(trim(sanitize_text_field($body['paymentMethod'] ?? $body['paymentGateway'] ?? 'gateway')));
+        if (!in_array($payment_method, ['gateway', 'payment gateway', 'midtrans'], true)) {
+            return self::error('Checkout WooCommerce hanya menggunakan Payment Gateway.', 400);
+        }
+
         try {
             $order = wc_create_order();
             $order->set_created_via('palma-cloudflare');
@@ -125,8 +138,9 @@ final class Palma_Rotan_Commerce_Bridge {
 
             $rate = max(1, (float) get_option('palma_usd_idr_rate', 16000));
             foreach ($items as $row) {
-                $lookup = sanitize_text_field($row['sku'] ?? $row['productId'] ?? '');
-                $product = wc_get_product($lookup);
+                $lookup = sanitize_text_field($row['sku'] ?? '');
+                if ($lookup === '') throw new Exception('SKU produk wajib tersedia untuk checkout WooCommerce.');
+                $product = false;
                 if (!$product && $lookup) {
                     $ids = wc_get_products(['sku'=>$lookup,'limit'=>1,'return'=>'ids']);
                     $product = $ids ? wc_get_product($ids[0]) : false;
@@ -168,6 +182,10 @@ final class Palma_Rotan_Commerce_Bridge {
             $order->update_status('pending', 'PALMA checkout created; awaiting payment gateway initialization.');
 
             $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
+            if ($payment_method === 'midtrans' && $gateway_id !== 'midtrans') {
+                // The configured WooCommerce gateway remains authoritative.
+                // 'midtrans' from the visitor is only an alias, not a forced gateway ID.
+            }
             $payment_url = '';
             $payment_token = '';
             $gateways = WC()->payment_gateways()->payment_gateways();
