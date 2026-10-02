@@ -2,9 +2,15 @@ name: Build PALMA ROTAN Commerce Bridge
 
 on:
   push:
+    branches: [main, commerce-bridge-v1.1-integration]
+    paths:
+      - 'wordpress/plugins/palma-rotan-commerce-bridge/**'
+      - '.github/workflows/build-commerce-bridge.yml'
+  pull_request:
     branches: [main]
     paths:
       - 'wordpress/plugins/palma-rotan-commerce-bridge/**'
+      - 'worker/**'
       - '.github/workflows/build-commerce-bridge.yml'
   workflow_dispatch:
 
