@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.0.6
+ * Version: 1.0.7
  * Requires Plugins: woocommerce
  */
 
@@ -22,6 +22,7 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('admin_init', [__CLASS__, 'register_settings']);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
         add_action('wp_head', [__CLASS__, 'payment_page_styles']);
+        add_filter('midtrans_snap_params_main_before_charge', [__CLASS__, 'midtrans_retry_order_id'], 10, 1);
     }
 
     public static function routes() {
@@ -307,6 +308,33 @@ final class Palma_Rotan_Commerce_Bridge {
         } catch (Throwable $e) {
             wp_die(esc_html($e->getMessage()));
         }
+    }
+
+    /**
+     * Midtrans requires each Snap transaction to use a unique order_id.
+     * WooCommerce reuses the same order ID when a customer retries payment.
+     * The Midtrans plugin normally handles this, but some plugin versions only
+     * recognize the Indonesian duplicate-error text. This compatibility filter
+     * uses the same -wc-mdtrs- suffix format so Midtrans notifications can still
+     * restore the original WooCommerce order ID.
+     */
+    public static function midtrans_retry_order_id($params) {
+        if (!isset($params['transaction_details']['order_id'])) return $params;
+        $base_order_id = sanitize_text_field((string) $params['transaction_details']['order_id']);
+        if ($base_order_id === '' || strpos($base_order_id, '-wc-mdtrs-') !== false) return $params;
+
+        $order = wc_get_order((int) $base_order_id);
+        if (!$order || $order->is_paid()) return $params;
+
+        // If a Snap token already exists, this is a retry of the same WC order.
+        $previous_token = (string) $order->get_meta('_mt_payment_snap_token');
+        if ($previous_token === '') return $params;
+
+        $retry_id = $base_order_id . '-wc-mdtrs-' . gmdate('YmdHis') . '-' . wp_rand(1000, 9999);
+        $params['transaction_details']['order_id'] = $retry_id;
+        $order->update_meta_data('_mt_suffixed_midtrans_order_id', $retry_id);
+        $order->save();
+        return $params;
     }
 
     public static function payment_page_styles() {
