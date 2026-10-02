@@ -839,6 +839,10 @@ final class Palma_Rotan_Commerce_Bridge {
         register_setting('palma_bridge','palma_usd_idr_rate',['sanitize_callback'=>'floatval']);
         register_setting('palma_bridge','palma_worker_sync_url',['sanitize_callback'=>'esc_url_raw']);
         register_setting('palma_bridge','palma_worker_sync_secret',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_api_key',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_origin_postal',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_domestic_couriers',['sanitize_callback'=>'sanitize_text_field']);
+        register_setting('palma_bridge','palma_biteship_export_couriers',['sanitize_callback'=>'sanitize_text_field']);
     }
 
     public static function admin_page() {
