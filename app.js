@@ -233,8 +233,12 @@ async function createOrder(fd){
         const paid=o&&((o.paymentStatus||'').toUpperCase()==='PAID'||['processing','completed'].includes(String(o.status||'').toLowerCase()));
         const invoice=o?.invoiceUrl||'';
         const packing=o?.packingUrl||'';
-        if(!paid||(!invoice&&!packing))return '';
-        return '<div class="notice">'+(data.settings.language==='ID'?'Pembayaran berhasil. Invoice dan Packing List sudah tersedia.':'Payment successful. Invoice and Packing List are available.')+'</div><div style="display:flex;gap:10px;flex-wrap:wrap">'+(invoice?'<a class="btn dark" href="'+invoice.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Invoice</a>':'')+(packing?'<a class="btn dark" href="'+packing.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Packing List</a>':'')+'</div>';
+        const courier=o?.shippingCarrier||'';
+        const tracking=o?.trackingNumber||'';
+        const trackingUrl=o?.trackingUrl||'';
+        if(!paid||(!invoice&&!packing&&!tracking))return '';
+        const trackingHtml=tracking?'<div class="notice" style="margin-top:10px">'+(data.settings.language==='ID'?'Kurir':'Courier')+': <b>'+String(courier||'-').replace(/[<>&"]/g,'')+'</b> · '+(data.settings.language==='ID'?'Resi':'Tracking')+': '+(trackingUrl?'<a href="'+trackingUrl.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">'+String(tracking).replace(/[<>&"]/g,'')+'</a>':'<b>'+String(tracking).replace(/[<>&"]/g,'')+'</b>')+'</div>':'';
+        return '<div class="notice">'+(data.settings.language==='ID'?'Pembayaran berhasil. Invoice dan Packing List sudah tersedia.':'Payment successful. Invoice and Packing List are available.')+'</div>'+trackingHtml+'<div style="display:flex;gap:10px;flex-wrap:wrap">'+(invoice?'<a class="btn dark" href="'+invoice.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Invoice</a>':'')+(packing?'<a class="btn dark" href="'+packing.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Packing List</a>':'')+'</div>';
       };
       const pollWooOrder=async()=>{
         if(!commerceMode||!statusUrl)return;
