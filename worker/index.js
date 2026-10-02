@@ -485,7 +485,7 @@ async function wooCommerceOrderSync(request,env){
   const netWeight=items.reduce((sum,x)=>sum+(Number(x.weightKg)||0)*(Number(x.quantity)||0),0);
   const authCode=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"").slice(0,16);
   statements.push(env.DB.prepare("INSERT INTO invoices(id,order_id,invoice_number,status,created_at) VALUES(?,?,?,'READY',CURRENT_TIMESTAMP)").bind(id("inv"),orderId,invoiceNo));
-  statements.push(env.DB.prepare("INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PENDING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(
+  statements.push(env.DB.prepare("INSERT INTO packing_orders(id,order_id,packing_number,status,auth_code,courier,tracking_number,tracking_url,package_count,gross_weight_kg,net_weight_kg,created_at) VALUES(?,?,?,'PACKING',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(
     id("pack"),orderId,packingNo,authCode,carrier,null,carrierTrackingUrl(carrier,null),packageCount,netWeight,netWeight
   ));
   statements.push(...itemStatements);
