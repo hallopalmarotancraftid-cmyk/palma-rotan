@@ -62,6 +62,23 @@ final class Palma_Rotan_Commerce_Bridge {
             header('Access-Control-Allow-Headers: Content-Type, X-Palma-Order-Key');
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
         }
+
+        // REST normally JSON-encodes scalar response bodies. Documents must be
+        // served as their actual HTML/PDF bytes so browsers and email links can
+        // download them correctly.
+        if (strpos($route, '/' . self::REST_NS . '/document/') === 0 ||
+            strpos($route, '/' . self::REST_NS . '/document-pdf/') === 0) {
+            if ($result instanceof WP_REST_Response) {
+                $data = $result->get_data();
+                if (is_string($data)) {
+                    $is_pdf = strpos($route, '/' . self::REST_NS . '/document-pdf/') === 0;
+                    header('Content-Type: ' . ($is_pdf ? 'application/pdf' : 'text/html; charset=utf-8'));
+                    if ($is_pdf) header('Content-Disposition: attachment');
+                    echo $data;
+                    return true;
+                }
+            }
+        }
         return $served;
     }
 
