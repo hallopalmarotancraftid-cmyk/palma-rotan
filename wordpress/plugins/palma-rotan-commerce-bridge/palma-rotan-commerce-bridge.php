@@ -236,6 +236,21 @@ final class Palma_Rotan_Commerce_Bridge {
             // browser navigation below, not inside the cross-origin fetch.
             $order->update_status('pending', 'PALMA checkout created; awaiting payment.');
             $gateway_id = sanitize_text_field(get_option('palma_payment_gateway_id', 'midtrans'));
+            // WooCommerce's order-pay page decides which receipt/payment UI to render
+            // from the order's saved payment method. The PALMA checkout calls the
+            // gateway directly, so persist that method explicitly before redirecting.
+            if (function_exists('wc_get_payment_gateway_by_order')) {
+                $gateway_object = wc_get_payment_gateway_by_order($order);
+            } else {
+                $gateway_object = null;
+            }
+            if (!$order->get_payment_method() || $order->get_payment_method() !== $gateway_id) {
+                $order->set_payment_method($gateway_id);
+                if (isset($gateways[$gateway_id]) && $gateways[$gateway_id] instanceof WC_Payment_Gateway) {
+                    $order->set_payment_method_title($gateways[$gateway_id]->get_title());
+                }
+                $order->save();
+            }
             $payment_url = add_query_arg(['key'=>$order->get_order_key()], rest_url(self::REST_NS . '/order/' . $order->get_id() . '/pay'));
 
             return self::cors(new WP_REST_Response([
@@ -269,6 +284,14 @@ final class Palma_Rotan_Commerce_Bridge {
         $gateways = WC()->payment_gateways()->payment_gateways();
         if (!isset($gateways[$gateway_id])) wp_die('Payment gateway WooCommerce tidak ditemukan.');
         if (!$gateways[$gateway_id]->is_available()) wp_die('Payment gateway WooCommerce tidak tersedia.');
+        // Keep the order's payment method aligned with the gateway used to create
+        // the Snap transaction. WooCommerce uses this value on /checkout/order-pay/
+        // to fire the matching woocommerce_receipt_{gateway_id} hook.
+        if ($order->get_payment_method() !== $gateway_id) {
+            $order->set_payment_method($gateway_id);
+            $order->set_payment_method_title($gateways[$gateway_id]->get_title());
+            $order->save();
+        }
         try {
             // Midtrans' WooCommerce gateway expects a live WooCommerce cart/session
             // and calls WC()->cart->empty_cart() during process_payment(). This
