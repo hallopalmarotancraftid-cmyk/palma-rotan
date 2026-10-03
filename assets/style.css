@@ -394,3 +394,116 @@ header{
   #shop .productsRail .product{flex-basis:calc((100% - 14px)/2)}
   #shop .productMeta h3{font-size:22px}
 }
+
+
+/* PALMA ROTAN — mobile layout parity / editorial responsive pass */
+@media (max-width: 767px){
+  html{scroll-padding-top:74px}
+  body{min-width:0;overflow-x:hidden}
+  .topbar{padding:8px 16px 22px;font-size:8px;white-space:nowrap;overflow:hidden}
+  .topbar span{margin-left:10px}
+  header{top:22px;height:66px;padding:0 18px;gap:12px}
+  .brand img{width:104px}
+  .mobile{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;font-size:18px}
+  .actions{margin-left:auto;gap:0}
+  .actions button{padding:6px}
+  .hero{height:88svh;min-height:600px;max-height:820px}
+  .heroCopy{left:22px;right:22px;top:55%;max-width:none}
+  .heroCopy h1{font-size:clamp(50px,14vw,72px);line-height:.88;margin:12px 0 16px}
+  .heroCopy p{font-size:13px;line-height:1.65;max-width:100%}
+  .dots{left:22px;bottom:22px}
+  .benefits{grid-template-columns:1fr}
+  .benefits>div{padding:18px 22px;min-height:0}
+  .section{padding:58px 20px}
+  .section h2{font-size:clamp(42px,12vw,58px);line-height:.94}
+  .intro{grid-template-columns:1fr;gap:12px;align-items:start}
+  .intro p,.wholesale p{font-size:16px;line-height:1.75}
+  .sectionHead{display:flex;flex-direction:column;align-items:flex-start;gap:18px;margin-bottom:28px}
+  .filters{width:100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}
+  .filters::-webkit-scrollbar{display:none}
+  .filters button{white-space:nowrap}
+  
+  /* Collections keep the desktop visual hierarchy without creating oversized mobile blocks. */
+  .collections{display:grid;grid-template-columns:1fr;min-height:0}
+  .collection,.collection.tall{grid-column:auto;min-height:0;aspect-ratio:4/3}
+  .collection>div{left:24px;right:24px;bottom:24px}
+  .collection h3{font-size:34px}
+  
+  /* Shop remains one horizontal product rail, not a second row. */
+  #shop .productsRail{gap:14px;padding-bottom:14px}
+  #shop .productsRail .product{flex:0 0 78vw}
+  #shop .productsRail .productMeta{padding:13px 14px 15px}
+  #shop .productMeta h3{font-size:22px}
+  #shop .productNav{justify-content:space-between;margin-top:8px}
+  #shop .productNav button{width:40px;height:40px}
+  
+  /* Craft Process: image + natural-height text, matching the desktop card structure. */
+  .process{padding-top:58px;padding-bottom:58px}
+  .processGrid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:30px;border:0;background:transparent}
+  .processGrid>div{min-height:0}
+  .processCard{display:flex;flex-direction:column;min-height:0!important;border:1px solid var(--line);background:var(--ivory)}
+  .processMedia{width:100%;height:auto;min-height:0;aspect-ratio:4/3;background-size:cover;background-position:center}
+  .processCopy{padding:30px 28px 34px;min-height:0}
+  .processCard .processNo{font-size:20px}
+  .processCard .processTitle{font-size:30px;line-height:1.02;margin:20px 0 12px}
+  .processCard .processDesc{font-size:12px;line-height:1.75;max-width:none;margin:0}
+  
+  /* Digital Catalog: same card hierarchy, scaled to phone width. */
+  .catalog{display:block;padding:58px 20px}
+  .catalogIntro{max-width:none;margin-bottom:26px}
+  .catalogIntro h2{font-size:clamp(42px,11.5vw,56px);line-height:.94}
+  .catalogIntro p{font-size:15px;line-height:1.75}
+  .catalogCards{grid-template-columns:1fr;gap:14px}
+  .catalogCard{min-height:0;aspect-ratio:1.45/1;padding:26px}
+  .catalogCard:before{inset:9px}
+  .catalogNo{top:20px;left:22px}
+  .catalogIcon{top:18px;right:20px;width:42px;height:42px}
+  .catalogLabel{font-size:30px}
+  .catalogDesc{font-size:11px;line-height:1.65;max-width:85%}
+  .catalogLink{margin-top:18px}
+  
+  /* Wholesale: same desktop content order, stacked cleanly on phone. */
+  .wholesale{display:flex;flex-direction:column;gap:0;padding:0 20px 58px}
+  .wholesaleVisual{order:1;width:100%;min-height:0;aspect-ratio:4/3;background-size:cover}
+  .wholesaleCopy{order:2;padding:38px 0 26px;align-self:auto}
+  .wholesaleCopy h2{font-size:clamp(42px,11.5vw,56px);line-height:.94;margin:12px 0 18px}
+  .wholesaleCopy p{max-width:none}
+  .wholesale form{order:3;display:grid;grid-template-columns:1fr;gap:12px}
+  .wholesale input,.wholesale textarea{width:100%;min-height:58px;padding:15px}
+  .wholesale textarea{grid-column:auto;min-height:150px}
+  .wholesale form .btn{width:auto;justify-self:start}
+  
+  /* Journal: editorial cards remain full-width and consistent with desktop. */
+  #journal{padding-top:58px}
+  .journal{display:grid;grid-template-columns:1fr;gap:42px;margin-top:28px}
+  .journal article{min-width:0}
+  .journal img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}
+  .journal small{margin-top:14px;font-size:9px}
+  .journal h3{font-size:34px;line-height:1.02;margin:8px 0 0}
+  
+  /* Story keeps image first, copy second, with controlled editorial spacing. */
+  .story{display:grid;grid-template-columns:1fr}
+  .storyImg{min-height:0;aspect-ratio:4/3;background-position:center}
+  .storyText{padding:48px 22px 56px}
+  .storyText h2{font-size:clamp(44px,12vw,60px);line-height:.92;margin:12px 0 20px}
+  .storyText p{font-size:15px;line-height:1.75}
+  
+  .promoBanner{grid-template-columns:1fr;min-height:0}
+  .promoImage{min-height:0;aspect-ratio:4/3}
+  .promoCopy{padding:44px 22px 50px}
+  .promoTitle{font-size:clamp(42px,11.5vw,56px)}
+  
+  footer{grid-template-columns:1fr 1fr;gap:26px;padding:52px 22px 20px}
+  footer>div:first-child{grid-column:1/-1}
+  footer img{width:112px}
+}
+
+/* Very small phones: preserve proportions instead of shrinking content into unreadable blocks. */
+@media (max-width: 390px){
+  .section{padding-left:18px;padding-right:18px}
+  .heroCopy{left:18px;right:18px}
+  .catalog,.wholesale{padding-left:18px;padding-right:18px}
+  .storyText,.promoCopy{padding-left:18px;padding-right:18px}
+  #shop .productsRail .product{flex-basis:82vw}
+  .processCopy{padding-left:24px;padding-right:24px}
+}
