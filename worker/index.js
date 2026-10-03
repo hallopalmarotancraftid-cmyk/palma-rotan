@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-order-verify-sync-2";
+var BUILD_ID = "2026-10-03-final-sync-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1530,7 +1530,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   // Packing List: real phone-scannable QR codes for tracking and authentication.
   // The waybill remains a Code128 barcode for conventional warehouse scanners.
   if(type==="packing"){
-    const barcodeY=Math.max(y-112,155), bw=(W-2*M-20)/3;
+    const barcodeY=250, bw=(W-2*M-20)/3;
     rect(M,barcodeY,bw,92,false);
     text(M+9,barcodeY+91,"TRACKING QR",7.0,"F2",muted);
     if(trackingQrImage){
@@ -1552,7 +1552,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     }
   }
   if(type==="packing"){
-    const cy=Math.max(barcodeY-28,72);
+    const cy=135;
     text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
     const checklistMap=[
       ["pallet","Pallet"],
