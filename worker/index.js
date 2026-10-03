@@ -2043,7 +2043,7 @@ async function documentPdf(request, env, type, orderId) {
       console.error("PDF_R2_STORE_ERROR", {type, orderId: order.id, message: storageError?.message || String(storageError)});
     }
   }
-  return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(request),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret"}});
+  return new Response(bytes,{status:200,headers:{"content-type":"application/pdf","content-disposition":`inline; filename="${type}-${order.order_number}.pdf"`,"cache-control":"private, no-store","access-control-allow-origin":cors(request),"access-control-allow-headers":"content-type, authorization, x-bootstrap-secret","access-control-expose-headers":"x-palma-label-count,x-palma-label-skipped,x-palma-label-skipped-refs"}});
 }
 __name(documentPdf, "documentPdf");
 async function adminSettings(request, env) {
