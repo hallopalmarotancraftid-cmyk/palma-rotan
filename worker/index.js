@@ -234,11 +234,12 @@ function parseDimensionsCm(value){
   const n=nums.map(x=>Number(String(x).replace(",","."))).filter(Number.isFinite);
   return {length:n[0]||1,width:n[1]||1,height:n[2]||1};
 }
-function biteshipConfig(env,carrier){
+function biteshipConfig(env,carrier,selectedService=""){
   const domestic=carrier==="J&T";
   const apiKey=String(env.BITESHIP_API_KEY||"").trim();
   const courierCompany=String(env[domestic?"BITESHIP_DOMESTIC_COURIER":"BITESHIP_EXPORT_COURIER"]||"").trim().toLowerCase();
-  const courierType=String(env[domestic?"BITESHIP_DOMESTIC_SERVICE":"BITESHIP_EXPORT_SERVICE"]||"").trim();
+  const configuredType=String(env[domestic?"BITESHIP_DOMESTIC_SERVICE":"BITESHIP_EXPORT_SERVICE"]||"").trim();
+   const courierType=String(selectedService||configuredType).trim();
   return {apiKey,courierCompany,courierType,mode:String(env.BITESHIP_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"};
 }
 function biteshipAuthHeaders(apiKey){return {authorization:apiKey,"content-type":"application/json","accept":"application/json"}}
@@ -572,8 +573,8 @@ async function wooCommerceOrderSync(request,env){
   const adminTotalIdr=Math.round(Number(body.adminTotalIdr||total*rate));
   const payloadHash=await sha256(raw);
   const statements=[
-    env.DB.prepare("INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_address_json,payment_status,order_status,source_system,source_order_id,source_order_number,source_idempotency_key,source_synced_at,source_payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PAID','PROCESSING',?,?,?,?,?,?)").bind(
-      orderId,orderNumber,customerId,currency,subtotal,shippingAmount,total,rate,adminTotalIdr,shippingMethod,address,"woocommerce",sourceOrderId,sourceOrderNumber,idempotencyKey,new Date().toISOString(),payloadHash
+    env.DB.prepare("INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_carrier,shipping_service_code,shipping_address_json,payment_status,order_status,source_system,source_order_id,source_order_number,source_idempotency_key,source_synced_at,source_payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PAID','PROCESSING',?,?,?,?,?,?)").bind(
+      orderId,orderNumber,customerId,currency,subtotal,shippingAmount,total,rate,adminTotalIdr,shippingMethod,carrier,String(body.shipping?.serviceCode||""),address,"woocommerce",sourceOrderId,sourceOrderNumber,idempotencyKey,new Date().toISOString(),payloadHash
     ),
     env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),orderId,"PROCESSING","WooCommerce order PAID berhasil diterima otomatis.")
   ];
