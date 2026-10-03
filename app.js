@@ -109,20 +109,26 @@ async function syncProductsFromAPI() {
 
     data.products = result.products.map(p => {
       let image = '';
+      const publicImage = String(p.image || '').trim();
+      const imageKey = String(p.image_key || '').trim();
 
-      if (p.image_key) {
-        const key = String(p.image_key).trim();
-        if (/^data:|^blob:|^https?:\/\//i.test(key)) {
-          image = key;
-        } else if (key.startsWith('assets/')) {
-          image = normalizeAssetUrl(key);
-        } else if (key.startsWith('media/')) {
-          image = `${PALMA_API_BASE}/${key}`;
+      // Prefer the actual public image URL when the commerce API provides one.
+      // This keeps desktop/mobile clients on the same image source instead of
+      // rebuilding a potentially device-specific media path from image_key.
+      if (/^data:|^blob:|^https?:\/\//i.test(publicImage)) {
+        image = publicImage;
+      } else if (imageKey) {
+        if (/^data:|^blob:|^https?:\/\//i.test(imageKey)) {
+          image = imageKey;
+        } else if (imageKey.startsWith('assets/')) {
+          image = normalizeAssetUrl(imageKey);
+        } else if (imageKey.startsWith('media/')) {
+          image = PALMA_API_BASE + '/' + imageKey;
         } else {
-          image = `${PALMA_API_BASE}/media/${key.replace(/^\/+/, '')}`;
+          image = PALMA_API_BASE + '/media/' + imageKey.replace(/^\/+/, '');
         }
-      } else if (p.image) {
-        image = normalizeAssetUrl(p.image);
+      } else if (publicImage) {
+        image = normalizeAssetUrl(publicImage);
       }
 
       return {
@@ -162,7 +168,9 @@ function syncFromAdmin(){try{const raw=safeLocalLoad();if(!raw)return;const next
 // Production database/API is the source of truth for visitor content.
 // Do not overwrite freshly fetched remote settings with stale localStorage data on focus.
 window.addEventListener('storage',e=>{if(e.key===KEY)syncSettingsFromAPI()});
-window.addEventListener('focus',()=>syncSettingsFromAPI());
+window.addEventListener('focus',()=>{syncSettingsFromAPI();syncProductsFromAPI()});
+window.addEventListener('pageshow',()=>syncProductsFromAPI());
+window.addEventListener('online',()=>syncProductsFromAPI());
 function save(){safeLocalSave()}function cart(){return JSON.parse(localStorage.getItem('palmaCart')||'[]')}function wish(){return JSON.parse(localStorage.getItem('palmaWish')||'[]')}function priceValue(p,c){if(p&&p.prices&&p.prices[c]!=null&&p.prices[c]!=='' )return Number(p.prices[c])||0;return (Number(p&&p.price)||0)*rates[c]}function money(v){const c=data.settings.currency||'USD';return new Intl.NumberFormat(c==='IDR'?'id-ID':'en-US',{style:'currency',currency:c,maximumFractionDigits:c==='IDR'?0:2}).format((v||0))}function moneyCurrency(v,c){c=c||data.settings.currency||'USD';return new Intl.NumberFormat(c==='IDR'?'id-ID':'en-US',{style:'currency',currency:c,maximumFractionDigits:c==='IDR'?0:2}).format((v||0))}function productMoney(p){const c=data.settings.currency||'USD';return money(priceValue(p,c))}function toast(t){const x=document.getElementById('toast');x.textContent=t;x.classList.add('show');setTimeout(()=>x.classList.remove('show'),2200)}
 function activeChannels(position){return (data.settings.channels||[]).filter(c=>c.active&&c.url&&(!position||!c.positions||c.positions.includes(position)))}
 function renderChannels(){const box=document.getElementById('salesChannels');if(!box)return;box.innerHTML=activeChannels('footer').map(c=>`<a class="channelBtn" href="${c.url}" ${c.newTab?'target="_blank" rel="noopener noreferrer"':''}>${c.label||c.name}</a>`).join('')}
