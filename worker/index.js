@@ -1023,10 +1023,8 @@ function makeShippingLabelPdf(order, branding = {}) {
     rect(0,0,W,H,cream);
     rect(0,382,W,50,soft);
 
-    // Carrier-first header, matching the Packing List visual language.
-    // Keep the J&T mark visibly rendered in the label header.
-    cmd.push("q 0.86 0.02 0.02 rg 208 387 62 25 re f Q");
-    text(219,394,"J&T",14,"F2","1 1 1");
+    // Carrier-first header, using the actual embedded J&T logo image.
+    cmd.push("q","62 0 0 25 208 387 cm","/JNT Do","Q");
     text(24,397,String(branding.brand||"PALMA ROTAN"),16,"F2");
     text(24,381,"SHIPPING LABEL",8.5,"F2",muted);
     line(18,367,279,367,1.0,brown);
@@ -1073,7 +1071,8 @@ function makeShippingLabelPdf(order, branding = {}) {
   }
   objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
-  objects.push(`<< /Type /XObject /Subtype /Image /Width ${jntLogo.width} /Height ${jntLogo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jntLogo.jpeg.length} >>\nstream\n`,jntLogo.jpeg,"\nendstream");
+  const jntHex=jntLogo.jpeg.toString("hex");
+  objects.push(`<< /Type /XObject /Subtype /Image /Width ${jntLogo.width} /Height ${jntLogo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] /Length ${jntHex.length+2} >>\nstream\n${jntHex}>\nendstream`);
 
   let pdf="%PDF-1.4\n",offs=[0];
   for(let i=0;i<objects.length;i++){
