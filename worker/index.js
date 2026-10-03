@@ -1769,7 +1769,7 @@ function documentVerificationBase(env){
 async function ensureDocumentAuthentication(orderId,type,env){
   if(!["invoice","packing"].includes(String(type))) throw new Error("Jenis dokumen tidak valid");
   await ensureDocumentAuthSchema(env);
-  const existing=await env.DB.prepare("SELECT * FROM document_authentications WHERE order_id=? AND document_type=?").bind(orderId,type).first();
+  let existing=await env.DB.prepare("SELECT * FROM document_authentications WHERE order_id=? AND document_type=?").bind(orderId,type).first();
   if(existing){ const base=documentVerificationBase(env); const expected=base+"/verify-document/"+encodeURIComponent(type)+"/"+encodeURIComponent(existing.token); if(String(existing.verification_url||"")!==expected){ await env.DB.prepare("UPDATE document_authentications SET verification_url=? WHERE id=?").bind(expected,existing.id).run(); existing={...existing,verification_url:expected}; } return existing; }
   const token=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"");
   const tokenHash=await sha256(token);
