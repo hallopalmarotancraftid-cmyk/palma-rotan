@@ -1610,7 +1610,7 @@ async function ensureDocumentAuthentication(orderId,type,env){
     .bind(row.id,row.order_id,row.document_type,row.token_hash,row.token,row.verification_url).run();
   return row;
 }
-async function publicDocumentVerification(request,env,type,token){
+async async function publicDocumentVerification(request,env,type,token){
   if(!["invoice","packing"].includes(String(type))) return new Response("Dokumen tidak valid",{status:404});
   await ensureDocumentAuthSchema(env);
   const tokenHash=await sha256(String(token||""));
