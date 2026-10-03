@@ -145,6 +145,15 @@ final class Palma_Rotan_Commerce_Bridge {
         return $response;
     }
 
+    private static function secure_image_url($url) {
+        $url = trim((string) $url);
+        if ($url === '') return '';
+        // WooCommerce is the source of product imagery. Always expose the
+        // attachment over HTTPS so mobile browsers do not receive a mixed-content
+        // image URL while desktop may still show a cached copy.
+        return function_exists('set_url_scheme') ? set_url_scheme($url, 'https') : preg_replace('#^http://#i', 'https://', $url);
+    }
+
     public static function products() {
         if (!class_exists('WooCommerce')) return self::error('WooCommerce belum aktif.', 503);
         $products = wc_get_products(['status'=>'publish','limit'=>-1,'orderby'=>'date','order'=>'DESC']);
@@ -165,7 +174,7 @@ final class Palma_Rotan_Commerce_Bridge {
                 'stock' => $p->managing_stock() ? (int) $p->get_stock_quantity() : null,
                 'weight_kg' => (float) $p->get_weight(),
                 'dimensions_cm' => trim($p->get_length().' × '.$p->get_width().' × '.$p->get_height(), ' ×'),
-                'image' => wp_get_attachment_image_url($p->get_image_id(), 'full') ?: '',
+                'image' => self::secure_image_url(wp_get_attachment_image_url($p->get_image_id(), 'full') ?: ''),
                 'type' => (string) get_post_meta($p->get_id(), '_palma_type', true) ?: 'retail',
                 'moq' => max(1, (int) get_post_meta($p->get_id(), '_palma_moq', true)),
             ];
