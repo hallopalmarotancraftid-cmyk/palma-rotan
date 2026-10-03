@@ -1311,7 +1311,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const carrierMark = (x,y,carrier) => {
     const v=String(carrier||"").toUpperCase();
     if(v.includes("J&T") || v.includes("JNT") || v.includes("JET")){
-      commands.push("q","54 0 0 23 "+x+" "+(y-3)+" cm","/JNT Do","Q");
+      commands.push("q","54 0 0 18 "+x+" "+(y-2)+" cm","/JNT Do","Q");
     } else if(v.includes("DHL")){
       commands.push("q 0.98 0.78 0.02 rg", x+" "+y+" 42 15 re f", "Q");
       text(x+5,y+4,"DHL",9,"F2","0.82 0.03 0.03");
@@ -1507,11 +1507,11 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   // Packing List: real phone-scannable QR codes for tracking and authentication.
   // The waybill remains a Code128 barcode for conventional warehouse scanners.
   if(type==="packing"){
-    const barcodeY=Math.max(y-88,92), bw=(W-2*M-20)/3;
+    const barcodeY=Math.max(y-112,155), bw=(W-2*M-20)/3;
     rect(M,barcodeY,bw,92,false);
-    text(M+9,barcodeY+78,"TRACKING QR",7.0,"F2",muted);
+    text(M+9,barcodeY+91,"TRACKING QR",7.0,"F2",muted);
     if(trackingQrImage){
-      const qs=72,qx=M+(bw-qs)/2,qy=barcodeY+8;
+      const qs=70,qx=M+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRTrack Do","Q");
       text(M+9,barcodeY+5,"SCAN TO TRACK",5.8,"F2",brown);
     }else{
@@ -1519,9 +1519,9 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     }
     barcodeSlot(M+bw+10,barcodeY,bw,92,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
     rect(M+(bw+10)*2,barcodeY,bw,92,false);
-    text(M+(bw+10)*2+9,barcodeY+78,"ORDER AUTHENTICATION QR",7.0,"F2",muted);
+    text(M+(bw+10)*2+9,barcodeY+91,"ORDER AUTHENTICATION QR",7.0,"F2",muted);
     if(authQrImage){
-      const qs=72,qx=M+(bw+10)*2+(bw-qs)/2,qy=barcodeY+8;
+      const qs=70,qx=M+(bw+10)*2+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRAuth Do","Q");
       text(M+(bw+10)*2+9,barcodeY+5,"SCAN TO VERIFY",5.8,"F2",brown);
     }else{
@@ -1530,7 +1530,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   }
   if(type==="packing"){
     const barcodeY=Math.max(y-88,92);
-    const cy=Math.max(barcodeY-26,86);
+    const cy=Math.max(barcodeY-22,115);
     text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
     const checklistMap=[
       ["pallet","Pallet"],
@@ -1713,7 +1713,7 @@ async function ensureDocumentAuthentication(orderId,type,env){
   if(!["invoice","packing"].includes(String(type))) throw new Error("Jenis dokumen tidak valid");
   await ensureDocumentAuthSchema(env);
   const existing=await env.DB.prepare("SELECT * FROM document_authentications WHERE order_id=? AND document_type=?").bind(orderId,type).first();
-  if(existing) return existing;
+  if(existing){ const base=documentVerificationBase(env); const expected=base+"/verify-document/"+encodeURIComponent(type)+"/"+encodeURIComponent(existing.token); if(String(existing.verification_url||"")!==expected){ await env.DB.prepare("UPDATE document_authentications SET verification_url=? WHERE id=?").bind(expected,existing.id).run(); existing={...existing,verification_url:expected}; } return existing; }
   const token=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"");
   const tokenHash=await sha256(token);
   const verificationUrl=documentVerificationBase(env)+"/verify-document/"+encodeURIComponent(type)+"/"+encodeURIComponent(token);
