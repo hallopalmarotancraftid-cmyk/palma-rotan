@@ -1811,7 +1811,43 @@ async function publicOrderVerification(request,env,orderNumber,authCode){
   let addressText=shippingAddress;
   try{const parsed=JSON.parse(shippingAddress);addressText=[parsed.address,parsed.city,parsed.state,parsed.postalCode,parsed.country].filter(Boolean).join(", ")}catch(_){}
   const status=String(order.shipping_status||order.order_status||"PACKING");
-  const html="<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>PALMA ROTAN — Order Verification "+esc(order.order_number)+"</title><style>body{margin:0;background:#f5eee4;color:#211a15;font-family:Arial,sans-serif}.wrap{max-width:700px;margin:0 auto;padding:18px}.card{background:#fff;border:1px solid #dccbb6;border-radius:18px;padding:22px;box-shadow:0 10px 28px rgba(33,26,21,.08)}.brand{font-size:12px;letter-spacing:.18em;color:#806f60}.hero{text-align:center;padding:8px 0 18px;border-bottom:1px solid #eadfd2}.check{width:58px;height:58px;border-radius:50%;margin:0 auto 10px;background:#e8f3e9;color:#24753a;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700}.verified{font-size:20px;font-weight:800;letter-spacing:.08em;color:#24753a}.section{margin-top:18px}.section h2{font-size:15px;margin:0 0 10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.item{border:1px solid #eadfd2;border-radius:10px;padding:11px}.label{font-size:11px;color:#806f60}.value{font-weight:700;margin-top:4px;word-break:break-word}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 6px;border-bottom:1px solid #eadfd2;text-align:left}th{font-size:10px;color:#806f60;letter-spacing:.08em}.verifiedBottom{margin-top:20px;padding:18px;border-radius:12px;background:#f3f8f3;text-align:center}.small{font-size:11px;color:#806f60}@media(max-width:560px){.wrap{padding:10px}.card{padding:16px}.grid{grid-template-columns:1fr}table{font-size:11px}}</style></head><body><main class='wrap'><section class='card'><div class='brand'>PALMA ROTAN</div><div class='hero'><div class='check'>✓</div><div class='verified'>VERIFIED</div><div class='small'>Order authentication result</div></div><section class='section'><h2>Data Pesanan</h2><div class='grid'><div class='item'><div class='label'>Nomor Pesanan</div><div class='value'>"+esc(order.order_number||"-")+"</div></div><div class='item'><div class='label'>Invoice</div><div class='value'>"+esc(order.invoice_number||"-")+"</div></div><div class='item'><div class='label'>Packing</div><div class='value'>"+esc(order.packing_number||"-")+"</div></div><div class='item'><div class='label'>Status</div><div class='value'>"+esc(status)+"</div></div></div></section><section class='section'><h2>Data Pengiriman</h2><div class='grid'><div class='item'><div class='label'>Kurir</div><div class='value'>"+esc(order.courier||"-")+"</div></div><div class='item'><div class='label'>Nomor Resi</div><div class='value'>"+esc(order.tracking_number||"-")+"</div></div><div class='item'><div class='label'>Jumlah Paket</div><div class='value'>"+Number(order.package_count||1)+"</div></div><div class='item'><div class='label'>Tujuan</div><div class='value'>"+esc(addressText||"-")+"</div></div></div></section><section class='section'><h2>Data Produk</h2><table><thead><tr><th>PRODUK</th><th>SKU</th><th>QTY</th><th>BERAT</th></tr></thead><tbody>"+productHtml+"</tbody></table></section><section class='verifiedBottom'><div class='check'>✓</div><div class='verified'>VERIFIED</div><div class='small'>Data QR sesuai dengan pesanan PALMA ROTAN.</div></section></section></main></body></html>";
+  const html=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PALMA ROTAN — Order Verification ${esc(order.order_number)}</title><style>
+body{margin:0;background:#f5eee4;color:#211a15;font-family:Arial,sans-serif}
+.wrap{max-width:700px;margin:0 auto;padding:12px}
+.card{background:#fff;border:1px solid #dccbb6;border-radius:18px;padding:20px;box-shadow:0 10px 28px rgba(33,26,21,.08)}
+.brand{text-align:center;font-size:12px;font-weight:800;letter-spacing:.18em;color:#806f60;margin-bottom:14px}
+.section{margin-top:18px}
+.section h2{font-size:15px;margin:0 0 10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.item{border:1px solid #eadfd2;border-radius:10px;padding:11px}
+.label{font-size:11px;color:#806f60}
+.value{font-weight:700;margin-top:4px;word-break:break-word}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:9px 6px;border-bottom:1px solid #eadfd2;text-align:left}
+th{font-size:10px;color:#806f60;letter-spacing:.08em}
+.verified{margin-top:22px;padding:20px 12px;border-radius:14px;background:#f3f8f3;text-align:center;border:1px solid #d7e8d9}
+.check{width:58px;height:58px;border-radius:50%;margin:0 auto 10px;background:#e8f3e9;color:#24753a;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700}
+.verifiedText{font-size:20px;font-weight:800;letter-spacing:.08em;color:#24753a}
+.small{font-size:11px;color:#806f60;margin-top:5px}
+@media(max-width:560px){.wrap{padding:8px}.card{padding:15px}.grid{grid-template-columns:1fr}table{font-size:11px}}
+</style></head><body><main class="wrap"><section class="card">
+<div class="brand">PALMA ROTAN</div>
+<section class="section"><h2>Data Pesanan</h2><div class="grid">
+<div class="item"><div class="label">Nomor Pesanan</div><div class="value">${esc(order.order_number||"-")}</div></div>
+<div class="item"><div class="label">Invoice</div><div class="value">${esc(order.invoice_number||"-")}</div></div>
+<div class="item"><div class="label">Packing List</div><div class="value">${esc(order.packing_number||"-")}</div></div>
+<div class="item"><div class="label">Status</div><div class="value">${esc(status)}</div></div>
+</div></section>
+<section class="section"><h2>Data Pengiriman</h2><div class="grid">
+<div class="item"><div class="label">Kurir</div><div class="value">${esc(order.courier||"-")}</div></div>
+<div class="item"><div class="label">Nomor Resi</div><div class="value">${esc(order.tracking_number||"-")}</div></div>
+<div class="item"><div class="label">Jumlah Paket</div><div class="value">${Number(order.package_count||1)}</div></div>
+<div class="item"><div class="label">Tujuan</div><div class="value">${esc(addressText||"-")}</div></div>
+</div></section>
+<section class="section"><h2>Data Produk <span class="small">(${items.length} item)</span></h2>
+<table><thead><tr><th>PRODUK</th><th>SKU</th><th>QTY</th><th>BERAT</th></tr></thead><tbody>${productHtml}</tbody></table></section>
+<section class="verified"><div class="check">✓</div><div class="verifiedText">VERIFIED</div><div class="small">Data QR sesuai dengan pesanan PALMA ROTAN.</div></section>
+</section></main></body></html>`;
   return new Response(html,{status:200,headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});
 }
 async function publicDocumentVerification(request,env,type,token){
