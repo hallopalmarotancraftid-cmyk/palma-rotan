@@ -988,6 +988,16 @@ function makeShippingLabelPdf(order, branding = {}) {
     const rect=(x,y,w,h,color="0.96 0.94 0.90")=>cmd.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
     rect(0,0,W,H);
     text(24,402,String(branding.brand||"PALMA ROTAN"),20,"F2");
+    const carrierUpper=courier.toUpperCase();
+    if(carrierUpper.includes("DHL")){
+      rect(205,394,58,22,"0.98 0.78 0.04");
+      text(214,401,"DHL",13,"F2","0.82 0.03 0.03");
+    }else if(carrierUpper.includes("J&T")||carrierUpper.includes("JNT")||carrierUpper.includes("JET")){
+      rect(205,394,58,22,"0.82 0.03 0.03");
+      text(213,401,"J&T",12,"F2","1 1 1");
+    }else{
+      text(205,401,carrierUpper.slice(0,9),8,"F2",brown);
+    }
     text(24,386,"SHIPPING LABEL",10,"F2",muted);
     text(24,360,"SHIP TO",8,"F2",muted);
     text(24,344,name,13,"F2");
