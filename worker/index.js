@@ -1251,7 +1251,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       for(const [start,len] of matrix.rows[row]) commands.push(qx+start*unit+" "+py+" "+(len*unit+0.02)+" "+(unit+0.02)+" re f");
     }
     commands.push("Q");
-    if(caption) text(x+9,y+5,caption,5.8,"F2",brown);
+    if(caption) text(x+9,y+h-23,caption,5.8,"F2",brown);
   };
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
     rect(x,y,w,h,false);
