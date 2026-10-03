@@ -207,7 +207,7 @@ __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
 function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
-async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg","packed_weight_per_unit_kg","shipping_provider","provider_order_id","provider_tracking_id","shipping_error","shipping_created_at","packing_checklist_json","packed_by","checked_by","packed_at","checked_at"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}await ensureLogisticsEventSchema(env);return true}
+async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg","shipping_provider","provider_order_id","provider_tracking_id","shipping_error","shipping_created_at","packing_checklist_json","packed_by","checked_by","packed_at","checked_at"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}await ensureLogisticsEventSchema(env);return true}
 async function ensureLogisticsEventSchema(env){await env.DB.prepare(`CREATE TABLE IF NOT EXISTS tracking_events (id TEXT PRIMARY KEY,order_id TEXT NOT NULL,tracking_number TEXT,status TEXT,event_time TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,location TEXT,description TEXT,source TEXT NOT NULL DEFAULT 'system',raw_payload TEXT)`).run();await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tracking_events_order_time ON tracking_events(order_id,event_time)").run();await env.DB.prepare(`CREATE TABLE IF NOT EXISTS notification_logs (id TEXT PRIMARY KEY,order_id TEXT NOT NULL,notification_type TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,provider_id TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,sent_at TEXT,error_message TEXT)`).run();await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_notification_logs_order_type ON notification_logs(order_id,notification_type)").run();return true}
 async function sendReadyToShipDocumentsEmail(order,items,branding,env){if(String(order.order_status||"").toUpperCase().replace(/_/g," ")!=="READY TO SHIP"||!String(order.tracking_number||"").trim())return {ok:false,skipped:true,reason:"READY_TO_SHIP dan tracking_number wajib tersedia"};const key="ready-to-ship-documents-"+order.id+"-"+String(order.tracking_number).trim();await ensureLogisticsEventSchema(env);const existing=await env.DB.prepare("SELECT * FROM notification_logs WHERE idempotency_key=?").bind(key).first();if(existing&&existing.status==="SENT")return {ok:true,duplicate:true,id:existing.provider_id||null};if(!existing){try{await env.DB.prepare("INSERT INTO notification_logs(id,order_id,notification_type,idempotency_key,status) VALUES(?,?,?,?,?)").bind(id("notif"),order.id,"READY_TO_SHIP_DOCUMENTS",key,"PENDING").run()}catch(error){if(!/unique|constraint/i.test(String(error?.message||error)))throw error;const concurrent=await env.DB.prepare("SELECT * FROM notification_logs WHERE idempotency_key=?").bind(key).first();if(concurrent?.status==="SENT")return {ok:true,duplicate:true,id:concurrent.provider_id||null}}}try{const result=await sendOrderDocumentsEmail(order,items,branding,env,key);if(result.ok){await env.DB.prepare("UPDATE notification_logs SET status='SENT',provider_id=?,sent_at=CURRENT_TIMESTAMP,error_message=NULL WHERE idempotency_key=?").bind(result.id||null,key).run();return result}await env.DB.prepare("UPDATE notification_logs SET status='SKIPPED',error_message=? WHERE idempotency_key=?").bind(result.reason||"skipped",key).run();return result}catch(error){await env.DB.prepare("UPDATE notification_logs SET status='FAILED',error_message=? WHERE idempotency_key=?").bind(String(error?.message||error).slice(0,500),key).run();throw error}}
 async function ensureProductLogisticsSchema(env){
@@ -245,7 +245,7 @@ function biteshipConfig(env,carrier){
 function biteshipAuthHeaders(apiKey){return {authorization:apiKey,"content-type":"application/json","accept":"application/json"}}
 async function createBiteshipShipment(orderId,env){
   await ensureShippingSchema(env);
-  const row=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,c.country,pk.id AS packing_id,pk.courier,pk.tracking_number,pk.provider_order_id,pk.provider_tracking_id,pk.shipping_provider,pk.gross_weight_kg,pk.net_weight_kg,pk.dimensions_cm,pk.packed_weight_per_unit_kg,pk.status AS packing_status FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? LIMIT 1`).bind(orderId).first();
+  const row=await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,c.country,pk.id AS packing_id,pk.courier,pk.tracking_number,pk.provider_order_id,pk.provider_tracking_id,pk.shipping_provider FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? LIMIT 1`).bind(orderId).first();
   if(!row) return {ok:false,skipped:true,reason:"Order tidak ditemukan"};
   if(String(row.payment_status||"").toUpperCase()!=="PAID") return {ok:false,skipped:true,reason:"Order belum PAID"};
   if(row.provider_order_id || row.tracking_number) return {ok:true,duplicate:true,providerOrderId:row.provider_order_id||null,trackingNumber:row.tracking_number||null};
@@ -263,30 +263,15 @@ async function createBiteshipShipment(orderId,env){
   try{destination=JSON.parse(String(row.shipping_address_json||"{}"))}catch(_){destination={}};
   const postal=String(destination.postalCode||"").trim();
   if(!postal) return {ok:false,skipped:true,reason:"Postal code tujuan kosong"};
-  const itemRows=(await env.DB.prepare(`SELECT oi.product_name,oi.quantity,oi.unit_price,oi.currency,p.weight_kg,p.dimensions_cm,p.sku FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid`).bind(orderId).all()).results||[];
+  const itemRows=(await env.DB.prepare(`SELECT oi.product_name,oi.quantity,oi.unit_price,oi.currency,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=? ORDER BY oi.rowid`).bind(orderId).all()).results||[];
   if(!itemRows.length) return {ok:false,skipped:true,reason:"Item order kosong"};
-  const totalQuantity=itemRows.reduce((sum,item)=>sum+Math.max(1,Number(item.quantity)||1),0);
   const rate=Number(row.admin_exchange_rate)||16000;
-  const totalValueIdr=itemRows.reduce((sum,item)=>{
+  const items=itemRows.map(item=>{
+    const dims=parseDimensionsCm(item.dimensions_cm);
     const valueRaw=Number(item.unit_price)||0;
     const valueIdr=String(item.currency||row.original_currency||"IDR").toUpperCase()==="USD"?Math.round(valueRaw*rate):Math.round(valueRaw);
-    return sum + valueIdr*Math.max(1,Number(item.quantity)||1);
-  },0);
-  const packageDims=parseDimensionsCm(row.dimensions_cm);
-  const packedWeight=Number(row.gross_weight_kg);
-  const packageReady=String(row.packing_status||"").toUpperCase()==="PACKED" && Number.isFinite(packedWeight)&&packedWeight>0&&packageDims.length>0&&packageDims.width>0&&packageDims.height>0;
-  if(!packageReady){
-    return {ok:false,skipped:true,reason:"Packing harus dikonfirmasi dan berat packed + dimensi paket final wajib tersedia"};
-  }
-  const productSummary=itemRows.map(item=>String(item.product_name||"PALMA ROTAN").trim()+" x"+Math.max(1,Number(item.quantity)||1)).join(", ").slice(0,450);
-  const items=packageReady
-    ? [{name:"PALMA ROTAN PACKAGE",description:productSummary||"Rattan craft shipment",value:totalValueIdr,quantity:1,length:packageDims.length,width:packageDims.width,height:packageDims.height,weight:Math.max(1,Math.round(packedWeight*1000))}]
-    : itemRows.map(item=>{
-        const dims=parseDimensionsCm(item.dimensions_cm);
-        const valueRaw=Number(item.unit_price)||0;
-        const valueIdr=String(item.currency||row.original_currency||"IDR").toUpperCase()==="USD"?Math.round(valueRaw*rate):Math.round(valueRaw);
-        return {name:String(item.product_name||"PALMA ROTAN").slice(0,100),description:"Rattan craft",value:valueIdr,quantity:Math.max(1,Number(item.quantity)||1),length:dims.length,width:dims.width,height:dims.height,weight:Math.max(1,Math.round((Number(item.weight_kg)||0)*1000))};
-      });
+    return {name:String(item.product_name||"PALMA ROTAN").slice(0,100),description:"Rattan craft",value:valueIdr,quantity:Math.max(1,Number(item.quantity)||1),length:dims.length,width:dims.width,height:dims.height,weight:Math.max(1,Math.round((Number(item.weight_kg)||0)*1000))};
+  });
   const payload={
     shipper_contact_name:originName,
     shipper_contact_phone:originPhone,
@@ -654,7 +639,10 @@ async function wooCommerceOrderSync(request,env){
     console.error("WOOCOMMERCE_SYNC_ERROR",{sourceOrderId,message:error?.message||String(error)});
     return json({error:"Gagal menyimpan order WooCommerce ke PALMA"},500,cors(request));
   }
-  // Courier shipment is created only after Packing is confirmed, so the carrier receives the final packed weight and package dimensions.
+  const shippingAutomation=await createBiteshipShipmentSafe(orderId,env);
+  if(!shippingAutomation.ok && !shippingAutomation.skipped){
+    console.error("WOOCOMMERCE_SHIPPING_AUTOMATION_ERROR",{orderId,error:shippingAutomation.error||shippingAutomation.reason||"unknown"});
+  }
   return json({
     ok:true,
     duplicate:false,
@@ -677,7 +665,7 @@ async function adminOrders(request, env) {
   await ensureProductLogisticsSchema(env);
   const admin = await requireAdmin(request, env);
   if (!admin) return json({ error: "Unauthorized" }, 401, cors(request));
-  const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg,pk.packed_weight_per_unit_kg,pk.dimensions_cm,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
+  const orderRows = await env.DB.prepare(`SELECT o.*,c.email,c.first_name,c.last_name,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg,pk.status AS packing_status,pk.auth_code,pk.email_sent_at,pk.email_error FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id ORDER BY o.created_at DESC`).all();
   const orders = orderRows.results || [];
   if (!orders.length) return json({ orders: [] }, 200, cors(request));
   const itemRows = await env.DB.prepare(`SELECT oi.*,p.weight_kg,p.dimensions_cm FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id ORDER BY oi.rowid`).all();
@@ -851,11 +839,7 @@ async function adminPacking(request,env){
     if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
     let checklist={};
     try{checklist=pack.packing_checklist_json?JSON.parse(pack.packing_checklist_json):{}}catch(_){checklist={}}
-    const itemTotals=(await env.DB.prepare("SELECT COALESCE(SUM(quantity),0) AS total_quantity,COALESCE(SUM(weight_kg*quantity),0) AS net_weight_kg FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?").bind(order.id).first())||{};
-    const totalQuantity=Math.max(1,Number(itemTotals.total_quantity)||1);
-    const netWeightKg=Number(itemTotals.net_weight_kg)||0;
-    const packedPerUnit=pack.packed_weight_per_unit_kg!=null?Number(pack.packed_weight_per_unit_kg):(pack.gross_weight_kg!=null&&Number(pack.gross_weight_kg)>0?Number(pack.gross_weight_kg)/totalQuantity:0);
-    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",grossWeightKg:pack.gross_weight_kg!=null?Number(pack.gross_weight_kg):null,packedWeightPerUnitKg:Number(packedPerUnit.toFixed(3)),totalQuantity,netWeightKg,packageDimensionsCm:pack.dimensions_cm||"",packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
+    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",grossWeightKg:pack.gross_weight_kg!=null?Number(pack.gross_weight_kg):null,packageDimensionsCm:pack.dimensions_cm||"",packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
   }
 
   const body=await request.json().catch(()=>({}));
@@ -869,12 +853,7 @@ async function adminPacking(request,env){
   const packagingType=String(body.packagingType||pack.packaging_type||"").trim();
   const packedBy=String(body.packedBy||pack.packed_by||"").trim();
   const checkedBy=String(body.checkedBy||pack.checked_by||"").trim();
-  const totalQuantityRow=(await env.DB.prepare("SELECT COALESCE(SUM(quantity),0) AS total_quantity FROM order_items WHERE order_id=?").bind(order.id).first())||{};
-  const totalQuantity=Math.max(1,Number(totalQuantityRow.total_quantity)||1);
-  const packedWeightPerUnitKg=body.packedWeightPerUnitKg!==undefined&&body.packedWeightPerUnitKg!==null&&String(body.packedWeightPerUnitKg).trim()!==""
-    ? Math.max(0,Number(body.packedWeightPerUnitKg)||0)
-    : (pack.packed_weight_per_unit_kg!=null?Math.max(0,Number(pack.packed_weight_per_unit_kg)||0):(Number(pack.gross_weight_kg||0)>0?Number(pack.gross_weight_kg||0)/totalQuantity:0));
-  const grossWeightKg=Number((packedWeightPerUnitKg*totalQuantity).toFixed(3));
+  const grossWeightKg=body.grossWeightKg!==undefined&&body.grossWeightKg!==null&&String(body.grossWeightKg).trim()!==""?Math.max(0,Number(body.grossWeightKg)||0):Number(pack.gross_weight_kg||0);
   const packageDimensionsCm=String(body.packageDimensionsCm||pack.dimensions_cm||"").trim().slice(0,100);
   const confirm=body.confirm===true;
   const allowedChecklistKeys=["pallet","cartonBox","protectiveWrapping","bubbleFoam","cornerProtection","strapping","other"];
@@ -889,15 +868,12 @@ async function adminPacking(request,env){
     if(!packagingType)return json({error:"Jenis kemasan wajib diisi"},400,cors(request));
     if(!packedBy)return json({error:"Packed By wajib diisi"},400,cors(request));
     if(!checkedBy)return json({error:"QC Checked By wajib diisi"},400,cors(request));
-    if(!(packedWeightPerUnitKg>0))return json({error:"Packed Weight / 1 pcs wajib diisi"},400,cors(request));
-    const pd=parseDimensionsCm(packageDimensionsCm);
-    if(!(pd.length>0&&pd.width>0&&pd.height>0))return json({error:"Package Dimensions wajib diisi lengkap (L x W x H cm)"},400,cors(request));
   }
 
   const nextStatus=confirm?"PACKED":String(body.status||pack.status||"PACKING").toUpperCase();
   const packedAt=confirm?(pack.packed_at||new Date().toISOString()):pack.packed_at;
   const checkedAt=confirm?(pack.checked_at||new Date().toISOString()):pack.checked_at;
-  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,gross_weight_kg=?,packed_weight_per_unit_kg=?,dimensions_cm=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(cleanChecklist),packagingType||null,packedBy||null,checkedBy||null,grossWeightKg,packedWeightPerUnitKg,packageDimensionsCm||null,packedAt,checkedAt,nextStatus,order.id).run();
+  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,gross_weight_kg=?,dimensions_cm=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(cleanChecklist),packagingType||null,packedBy||null,checkedBy||null,grossWeightKg,packageDimensionsCm||null,packedAt,checkedAt,nextStatus,order.id).run();
 
   if(confirm){
     await env.DB.batch([
@@ -908,7 +884,7 @@ async function adminPacking(request,env){
   }else{
     await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"SAVE_PACKING_CHECKLIST","order",order.id,JSON.stringify({packagingType,packedBy,checkedBy,checklist})).run();
   }
-  return json({ok:true,status:nextStatus,checklist:cleanChecklist,packagingType,packedBy,checkedBy,packedWeightPerUnitKg,totalQuantity,grossWeightKg,packageDimensionsCm,packedAt,checkedAt},200,cors(request));
+  return json({ok:true,status:nextStatus,checklist:cleanChecklist,packagingType,packedBy,checkedBy,grossWeightKg,packageDimensionsCm,packedAt,checkedAt},200,cors(request));
 }
 __name(adminPacking,"adminPacking");
 
@@ -1379,27 +1355,21 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   if(addressLines[1]) text(320,606,addressLines[1],7.5,"F1",muted);
 
   if(type === "packing"){
-    roundRect(M, 494, 245, 82, false);
-    roundRect(308, 494, 245, 82, false);
+    roundRect(M, 510, 245, 66, false);
+    roundRect(308, 510, 245, 66, false);
     text(54, 560, "SHIPPING INFORMATION", 8.0, "F2", muted);
     text(54, 544, "Courier", 7.6, "F1", muted);
     carrierMark(112, 539, order.courier || order.shipping_method || "");
     text(54, 530, "Tracking No.", 7.6, "F1", muted);
     text(112, 530, String(order.tracking_number||"-").slice(0,23), 7.0, "F1");
-    text(54, 516, "Total Net Weight", 7.6, "F1", muted);
-    text(112, 516, Number(order.net_weight_kg||0).toFixed(2)+" kg", 7.0, "F1");
-    text(54, 502, "Total Packed Weight", 7.6, "F1", muted);
-    text(145, 502, order.packed_gross_weight_kg!=null?Number(order.packed_gross_weight_kg).toFixed(2)+" kg":"-", 7.0, "F1");
-
+    
     text(320, 560, "PACKAGE SUMMARY", 8.0, "F2", muted);
-    text(320, 544, "Packages", 7.6, "F1");
+    text(320, 544, "Packages", 7.6, "F1", muted);
     text(390, 544, String(order.package_count||1), 7.0, "F1");
-    text(320, 530, "Package Type", 7.6, "F1");
+    text(320, 530, "Package Type", 7.6, "F1", muted);
     text(390, 530, String(order.packaging_type||"-").slice(0,22), 7.0, "F1");
-    text(320, 516, "Package Dimensions", 7.6, "F1");
-    text(390, 516, String(order.dimensions_cm||"-").slice(0,21), 6.4, "F1");
-    text(320, 502, "Status", 7.6, "F1");
-    text(390, 502, String(order.packing_status||"PENDING").replace(/_/g," ").slice(0,20), 7.0, "F1");
+    text(320, 516, "Status", 7.6, "F1", muted);
+    text(390, 516, String(order.packing_status||"PENDING").replace(/_/g," ").slice(0,20), 7.0, "F1");
   }
   if(type === "invoice"){
     roundRect(M, 550, 118, 27, true, "0.88 0.96 0.90");
@@ -1461,7 +1431,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
         const net=Number(item.weight_kg||0);
         text(389,y-18,Number.isFinite(net)?net.toFixed(2)+" kg":"-",6.7,"F1");
         text(439,y-18,String(item.sku||"-").slice(0,12),6.2,"F1");
-        text(499,y-18,String(item.dimensions_cm||"-").slice(0,12),6.2,"F1");
+        text(499,y-18,String(item.dimensions_cm||"-").replace(/[×?]/g,"X").slice(0,12),6.2,"F1");
       } else {
         text(50,y-18,String(index+1),8,"F1");
         let yy=y-13;
@@ -1550,7 +1520,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     checklistMap.forEach((entry,i)=>{
       const col=i%2,row=Math.floor(i/2),xx=M+col*136,yy=cy-16-row*12;
       commands.push(tan+" RG","0.8 w",xx+" "+yy+" 7 7 re S");
-      if(checklist[entry[0]]===true) text(xx+1,yy+0.5,"X",5.2,"F2",brown);
+      if(checklist[entry[0]]===true) text(xx+1,yy+0.5,"✓",5.2,"F2",brown);
       text(xx+12,yy+0.8,entry[1],5.7,"F1",muted);
     });
     const base=cy-16-Math.ceil(checklistMap.length/2)*12;
@@ -1558,12 +1528,13 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     if(checklist.qcNote) text(M,base-20,"QC Note: "+String(checklist.qcNote).slice(0,72),6.2,"F1",muted);
     text(M,base-32,"Packing Type: "+String(order.packaging_type||"-").slice(0,24),6.5,"F1",muted);
     text(M+175,base-32,"Total Packed Weight: "+(order.packed_gross_weight_kg!=null?Number(order.packed_gross_weight_kg).toFixed(2)+" kg":"-"),6.5,"F1",muted);
+    text(M+340,base-32,"Package Dimensions: "+String(order.dimensions_cm||"-").replace(/[×?]/g,"X").slice(0,24),6.5,"F1",muted);
   }
 
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
-  text(86,10,"NATURAL ELEGANCE MINIMALIS",6.2,"F1",muted);
+  text(86,10,"TIMELESS",6.2,"F1",muted);
   text(390,10,"PALMA ROTAN",7,"F2");
 
   const stream=commands.join("\n")+"\n";
@@ -1847,7 +1818,7 @@ function orderVerificationUrl(order,env){
   return base+"/verify-order/"+encodeURIComponent(order.order_number||"")+"/"+encodeURIComponent(order.auth_code||"");
 }
 async function publicOrderVerification(request,env,orderNumber,authCode){
-  const order=await env.DB.prepare("SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.status AS shipping_status,pk.package_count,pk.net_weight_kg,pk.gross_weight_kg,pk.dimensions_cm,pk.auth_code,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE lower(o.order_number)=lower(?) LIMIT 1").bind(orderNumber).first();
+  const order=await env.DB.prepare("SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.status AS shipping_status,pk.package_count,pk.auth_code,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE lower(o.order_number)=lower(?) LIMIT 1").bind(orderNumber).first();
   if(!order||!order.auth_code||String(order.auth_code)!==String(authCode)) return new Response("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>PALMA ROTAN — Verification</title><body style='font-family:Arial,sans-serif;background:#f5eee4;padding:24px'><div style='max-width:620px;margin:auto;background:#fff;padding:28px;border-radius:16px;border:1px solid #dccbb6'><h2>PALMA ROTAN</h2><h1>Data Tidak Valid</h1><p>QR autentikasi tidak cocok dengan pesanan.</p></div></body>",{status:404,headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});
   const items=await loadPdfOrderItems(env,order);
   const esc=safe=>escEmail(safe);
@@ -1889,13 +1860,7 @@ th{font-size:10px;color:#806f60;letter-spacing:.08em}
 <div class="item"><div class="label">Jumlah Paket</div><div class="value">${Number(order.package_count||1)}</div></div>
 <div class="item"><div class="label">Tujuan</div><div class="value">${esc(addressText||"-")}</div></div>
 </div></section>
-<section class="section"><h2>Data Paket</h2><div class="grid">
-<div class="item"><div class="label">Total Net Weight</div><div class="value">${Number(order.net_weight_kg||0).toFixed(2)} kg</div></div>
-<div class="item"><div class="label">Total Packed Weight</div><div class="value">${Number(order.gross_weight_kg||0).toFixed(2)} kg</div></div>
-<div class="item"><div class="label">Package Dimensions</div><div class="value">${esc(order.dimensions_cm||"-")}</div></div>
-<div class="item"><div class="label">Package Type</div><div class="value">${esc(order.packaging_type||"-")}</div></div>
-</div></section>
-${marker}
+<section class="section"><h2>Data Produk <span class="small">(${items.length} item)</span></h2>
 <table><thead><tr><th>PRODUK</th><th>SKU</th><th>QTY</th><th>BERAT</th></tr></thead><tbody>${productHtml}</tbody></table></section>
 <section class="verified"><div class="check">✓</div><div class="verifiedText">VERIFIED</div><div class="small">Data QR sesuai dengan pesanan PALMA ROTAN.</div></section>
 </section></main></body></html>`;
@@ -1973,7 +1938,7 @@ async function documentPdf(request, env, type, orderId) {
   const authorizedByLink = await verifyDocumentAccessToken(env, accessToken, type, ref);
   if (!admin && !authorizedByLink) return json({ error: "Unauthorized" }, 401, cors(request));
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.net_weight_kg,pk.gross_weight_kg AS packed_gross_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg AS packed_gross_weight_kg,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(request));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
@@ -1989,20 +1954,6 @@ async function documentPdf(request, env, type, orderId) {
     order.document_verification_url=orderVerificationUrl(order,env);
   }
   const items = await loadPdfOrderItems(env, order);
-
-  // Net weight on the document must follow the current WooCommerce item data,
-  // not the old weight snapshot saved when the order was first created.
-  const calculatedNetWeight = items.reduce((sum, item) => {
-    const weight = Number(item.weight_kg) || 0;
-    const quantity = Number(item.quantity ?? item.qty) || 0;
-    return sum + (weight * quantity);
-  }, 0);
-  order.net_weight_kg = calculatedNetWeight;
-  try {
-    await env.DB.prepare("UPDATE packing_orders SET net_weight_kg=? WHERE order_id=?")
-      .bind(calculatedNetWeight, order.id).run();
-  } catch (_) {}
-
   const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
   const branding = Object.fromEntries((brandRows.results || []).map((row) => {
     let value = row.value_json;
