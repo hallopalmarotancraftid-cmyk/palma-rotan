@@ -1267,6 +1267,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   text(54, 621, (`${order.first_name || ""} ${order.last_name || ""}`.trim() || "-").slice(0,36), 10, "F2");
   text(54, 606, "Email: " + (order.email || "-"), 7.5, "F1", muted);
   text(320, 638, "SHIPMENT", 8, "F2", muted);
+  carrierMark(486, 637, order.courier || order.shipping_method || "");
   let addressText = "-";
   try {
     const parsedAddress = JSON.parse(order.shipping_address_json || "{}");
