@@ -37,8 +37,12 @@ async function showProductionPdfUrl(url,filename){
     frame.src=objectUrl;
     modal.querySelector('#pdfLoading').replaceWith(frame);
   }catch(e){
-    modal.querySelector('#pdfLoading').innerHTML='<div style="color:#8b2e24;padding:30px;text-align:center"><b>Gagal memuat PDF</b><br>'+html(e.message||e)+'</div>';
-    alert('Gagal membuka dokumen production: '+(e.message||e));
+    // Cross-origin PDF fetch can be blocked by a browser even when the authenticated document URL itself is valid. Fall back to the signed PDF URL instead of breaking the production document viewer.
+    const frame=document.createElement('iframe');
+    frame.title=filename;
+    frame.style.cssText='flex:1;width:100%;min-height:0;border:0;border-radius:8px;background:#fff';
+    frame.src=url;
+    modal.querySelector('#pdfLoading').replaceWith(frame);
   }
   modal.querySelector('#pdfCloseBtn').onclick=()=>{if(modal.dataset.objectUrl)URL.revokeObjectURL(modal.dataset.objectUrl);modal.remove()};
 }
