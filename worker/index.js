@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-shipping-proxy-1";
+var BUILD_ID = "2026-10-03-packing-ui-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -206,7 +206,7 @@ __name(sendOrderDocumentsEmail,"sendOrderDocumentsEmail");
 function shippingCarrierForCountry(country){const c=String(country||"").trim().toLowerCase();return ["indonesia","id","indonesia (id)"].includes(c)?"J&T":"DHL"}
 __name(shippingCarrierForCountry,"shippingCarrierForCountry");
 function shippingMode(env){return String(env.SHIPPING_MODE||"SANDBOX").trim().toUpperCase()==="PRODUCTION"?"PRODUCTION":"SANDBOX"}
-async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg","shipping_provider","provider_order_id","provider_tracking_id","shipping_error","shipping_created_at"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}await ensureLogisticsEventSchema(env);return true}
+async function ensureShippingSchema(env){const cols=["courier","tracking_number","tracking_url","shipped_at","delivered_at","auth_code","email_sent_at","email_error","packaging_type","dimensions_cm","packaging_weight_kg","shipping_provider","provider_order_id","provider_tracking_id","shipping_error","shipping_created_at","packing_checklist_json","packed_by","checked_by","packed_at","checked_at"];const info=await env.DB.prepare("PRAGMA table_info(packing_orders)").all();const existing=new Set((info.results||[]).map(x=>x.name));for(const col of cols){if(existing.has(col))continue;try{await env.DB.prepare("ALTER TABLE packing_orders ADD COLUMN "+col+" TEXT").run()}catch(err){if(!/duplicate column name/i.test(String(err?.message||err)))throw err}}await ensureLogisticsEventSchema(env);return true}
 async function ensureLogisticsEventSchema(env){await env.DB.prepare(`CREATE TABLE IF NOT EXISTS tracking_events (id TEXT PRIMARY KEY,order_id TEXT NOT NULL,tracking_number TEXT,status TEXT,event_time TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,location TEXT,description TEXT,source TEXT NOT NULL DEFAULT 'system',raw_payload TEXT)`).run();await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tracking_events_order_time ON tracking_events(order_id,event_time)").run();await env.DB.prepare(`CREATE TABLE IF NOT EXISTS notification_logs (id TEXT PRIMARY KEY,order_id TEXT NOT NULL,notification_type TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL,provider_id TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,sent_at TEXT,error_message TEXT)`).run();await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_notification_logs_order_type ON notification_logs(order_id,notification_type)").run();return true}
 async function sendReadyToShipDocumentsEmail(order,items,branding,env){if(String(order.order_status||"").toUpperCase().replace(/_/g," ")!=="READY TO SHIP"||!String(order.tracking_number||"").trim())return {ok:false,skipped:true,reason:"READY_TO_SHIP dan tracking_number wajib tersedia"};const key="ready-to-ship-documents-"+order.id+"-"+String(order.tracking_number).trim();await ensureLogisticsEventSchema(env);const existing=await env.DB.prepare("SELECT * FROM notification_logs WHERE idempotency_key=?").bind(key).first();if(existing&&existing.status==="SENT")return {ok:true,duplicate:true,id:existing.provider_id||null};if(!existing){try{await env.DB.prepare("INSERT INTO notification_logs(id,order_id,notification_type,idempotency_key,status) VALUES(?,?,?,?,?)").bind(id("notif"),order.id,"READY_TO_SHIP_DOCUMENTS",key,"PENDING").run()}catch(error){if(!/unique|constraint/i.test(String(error?.message||error)))throw error;const concurrent=await env.DB.prepare("SELECT * FROM notification_logs WHERE idempotency_key=?").bind(key).first();if(concurrent?.status==="SENT")return {ok:true,duplicate:true,id:concurrent.provider_id||null}}}try{const result=await sendOrderDocumentsEmail(order,items,branding,env,key);if(result.ok){await env.DB.prepare("UPDATE notification_logs SET status='SENT',provider_id=?,sent_at=CURRENT_TIMESTAMP,error_message=NULL WHERE idempotency_key=?").bind(result.id||null,key).run();return result}await env.DB.prepare("UPDATE notification_logs SET status='SKIPPED',error_message=? WHERE idempotency_key=?").bind(result.reason||"skipped",key).run();return result}catch(error){await env.DB.prepare("UPDATE notification_logs SET status='FAILED',error_message=? WHERE idempotency_key=?").bind(String(error?.message||error).slice(0,500),key).run();throw error}}
 async function ensureProductLogisticsSchema(env){
@@ -808,6 +808,57 @@ async function adminVerifyPayment(request, env) {
 }
 __name(adminVerifyPayment, "adminVerifyPayment");
 
+async function adminPacking(request,env){
+  await ensureShippingSchema(env);
+  const admin=await requireAdmin(request,env);
+  if(!admin)return json({error:"Unauthorized"},401,cors(request));
+  const body=await request.json().catch(()=>({}));
+  if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(request));
+  const order=await env.DB.prepare("SELECT id,order_number,order_status,payment_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(body.orderId,body.orderId).first();
+  if(!order)return json({error:"Order tidak ditemukan"},404,cors(request));
+  const pack=await env.DB.prepare("SELECT * FROM packing_orders WHERE order_id=?").bind(order.id).first();
+  if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
+
+  if(request.method==="GET"){
+    let checklist={};
+    try{checklist=pack.packing_checklist_json?JSON.parse(pack.packing_checklist_json):{}}catch(_){checklist={}}
+    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
+  }
+
+  const checklist=body.checklist&&typeof body.checklist==="object"?body.checklist:{};
+  const packagingType=String(body.packagingType||pack.packaging_type||"").trim();
+  const packedBy=String(body.packedBy||pack.packed_by||"").trim();
+  const checkedBy=String(body.checkedBy||pack.checked_by||"").trim();
+  const confirm=body.confirm===true;
+  const required=["productQuantity","productCondition","weightDimensions","shippingLabel","commercialInvoice","packingList","finalQc"];
+  const missing=required.filter(key=>checklist[key]!==true);
+  const packageUsed=["cartonBox","woodenCrate","pallet"].some(key=>checklist[key]===true);
+  if(confirm){
+    if(missing.length)return json({error:"Checklist wajib belum lengkap",missing},400,cors(request));
+    if(!packageUsed)return json({error:"Pilih minimal satu jenis kemasan: Carton Box, Wooden Crate atau Pallet"},400,cors(request));
+    if(!packagingType)return json({error:"Jenis kemasan wajib diisi"},400,cors(request));
+    if(!packedBy)return json({error:"Packed By wajib diisi"},400,cors(request));
+    if(!checkedBy)return json({error:"Checked By wajib diisi"},400,cors(request));
+  }
+
+  const nextStatus=confirm?"PACKED":String(body.status||pack.status||"PACKING").toUpperCase();
+  const packedAt=confirm?(pack.packed_at||new Date().toISOString()):pack.packed_at;
+  const checkedAt=confirm?(pack.checked_at||new Date().toISOString()):pack.checked_at;
+  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(checklist),packagingType||null,packedBy||null,checkedBy||null,packedAt,checkedAt,nextStatus,order.id).run();
+
+  if(confirm){
+    await env.DB.batch([
+      env.DB.prepare("UPDATE orders SET order_status='PACKED',updated_at=CURRENT_TIMESTAMP WHERE id=? AND payment_status='PAID'").bind(order.id),
+      env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),order.id,"PACKED","Packing checklist completed and confirmed"),
+      env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"CONFIRM_PACKING","order",order.id,JSON.stringify({packagingType,packedBy,checkedBy,checklist}))
+    ]);
+  }else{
+    await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"SAVE_PACKING_CHECKLIST","order",order.id,JSON.stringify({packagingType,packedBy,checkedBy,checklist})).run();
+  }
+  return json({ok:true,status:nextStatus,checklist,packagingType,packedBy,checkedBy,packedAt,checkedAt},200,cors(request));
+}
+__name(adminPacking,"adminPacking");
+
 async function adminShipping(request,env){
   await ensureShippingSchema(env);
   const admin=await requireAdmin(request,env);
@@ -820,7 +871,7 @@ async function adminShipping(request,env){
   if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
   const autoCreateShipment=body.autoCreateShipment===true;
   const status=String(body.status||(autoCreateShipment?"READY TO SHIP":pack.status)||"PACKING").toUpperCase();
-  const allowed=["PACKING","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
+  const allowed=["PACKING","PACKED","READY TO SHIP","SHIPPED","DELIVERED","CANCELLED"];
   if(!allowed.includes(status))return json({error:"Status pengiriman tidak valid"},400,cors(request));
   let trackingNumber=String(body.trackingNumber||"").trim()||null;
   let courier=String(body.courier||pack.courier||"").trim().toUpperCase()||null;
@@ -840,7 +891,7 @@ async function adminShipping(request,env){
   if((domestic&&courier!=="J&T")||(!domestic&&courier!=="DHL"))return json({error:domestic?"Order domestik wajib menggunakan J&T":"Order ekspor wajib menggunakan DHL"},400,cors(request));
   await env.DB.prepare("UPDATE packing_orders SET courier=?,tracking_number=?,tracking_url=?,status=?,shipped_at=CASE WHEN ?='SHIPPED' AND shipped_at IS NULL THEN CURRENT_TIMESTAMP ELSE shipped_at END,delivered_at=CASE WHEN ?='DELIVERED' AND delivered_at IS NULL THEN CURRENT_TIMESTAMP ELSE delivered_at END WHERE order_id=?").bind(courier,trackingNumber,trackingUrlValue,status,status,status,order.id).run();
   await env.DB.prepare("INSERT INTO tracking_events(id,order_id,tracking_number,status,event_time,location,description,source) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?,?,?)").bind(id("trackevt"),order.id,trackingNumber,status,null,"Shipping status updated by admin","admin").run();
-  const orderStatus=status==="DELIVERED"?"DELIVERED":status==="SHIPPED"?"SHIPPED":status==="READY TO SHIP"?"READY TO SHIP":status==="PACKING"?"PACKING":order.order_status||"PROCESSING";
+  const orderStatus=status==="DELIVERED"?"DELIVERED":status==="SHIPPED"?"SHIPPED":status==="READY TO SHIP"?"READY TO SHIP":status==="PACKED"?"PACKED":status==="PACKING"?"PACKING":order.order_status||"PROCESSING";
   await env.DB.prepare("UPDATE orders SET order_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(orderStatus,order.id).run();
   await env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),order.id,orderStatus,"Shipping update: "+(courier||"-")+" "+(trackingNumber||"-")).run();
   await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"UPDATE_SHIPPING","order",order.id,JSON.stringify({courier,trackingNumber,trackingUrl:trackingUrlValue,status})).run();
@@ -1348,14 +1399,35 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     }
   }
   if(type==="packing"){
-    const cy=Math.max(y-88,132);
+    const cy=Math.max(y-92,138);
     text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
-    const checks=["Product quantity checked","Weight / dimensions checked","Tracking / label checked","Documents enclosed"];
-    checks.forEach((label,i)=>{
-      const yy=cy-16-i*12;
-      commands.push(tan+" RG", "0.8 w", M+" "+yy+" 8 8 re S");
-      text(M+14,yy+1,label,6.8,"F1",muted);
+    const checklistMap=[
+      ["productQuantity","Product quantity checked"],
+      ["productCondition","Product condition / QC"],
+      ["weightDimensions","Weight / dimensions checked"],
+      ["cartonBox","Carton Box"],
+      ["woodenCrate","Wooden Box / Crate"],
+      ["pallet","Pallet"],
+      ["plasticWrap","Plastic Wrap"],
+      ["bubbleWrap","Bubble Wrap / Foam"],
+      ["strapping","Strapping / Banding"],
+      ["hTaping","H-Taping / Sealing"],
+      ["shippingLabel","Shipping Label"],
+      ["commercialInvoice","Commercial Invoice"],
+      ["packingList","Packing List"],
+      ["finalQc","Final QC"]
+    ];
+    let checklist={};
+    try{checklist=JSON.parse(String(order.packing_checklist_json||"{}"))||{}}catch(_){checklist={}}
+    checklistMap.forEach((entry,i)=>{
+      const col=i%2,row=Math.floor(i/2),xx=M+col*136,yy=cy-16-row*12;
+      commands.push(tan+" RG","0.8 w",xx+" "+yy+" 7 7 re S");
+      if(checklist[entry[0]]===true) text(xx+1,yy+0.5,"X",5.2,"F2",brown);
+      text(xx+12,yy+0.8,entry[1],5.7,"F1",muted);
     });
+    const base=cy-16-Math.ceil(checklistMap.length/2)*12;
+    text(M,base-8,"Packing Type: "+String(order.packaging_type||"-").slice(0,28),6.5,"F1",muted);
+    text(M+220,base-8,"Packed By: "+String(order.packed_by||"-").slice(0,22),6.5,"F1",muted);
   }
 
   // Footer.
@@ -1587,7 +1659,7 @@ async function documentPdf(request, env, type, orderId) {
   const authorizedByLink = await verifyDocumentAccessToken(env, accessToken, type, ref);
   if (!admin && !authorizedByLink) return json({ error: "Unauthorized" }, 401, cors(request));
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.status AS packing_status,pk.auth_code FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(request));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
@@ -1709,6 +1781,7 @@ var index_default = {
     if (url.pathname === "/api/integrations/woocommerce/shipping-rates" && request.method === "POST") return wooCommerceShippingRatesProxy(request, env);
     if (url.pathname === "/api/integrations/biteship/webhook" && request.method === "POST") return updateBiteshipWebhook(request, env);
     if (url.pathname === "/api/admin/shipping" && request.method === "POST") return adminShipping(request, env);
+    if (url.pathname === "/api/admin/packing" && ["GET","POST"].includes(request.method)) return adminPacking(request, env);
     const trackMatch = url.pathname.match(/^\/track\/([^/]+)\/([^/]+)$/);
     if (trackMatch && request.method === "GET") return publicTracking(request, env, decodeURIComponent(trackMatch[1]), decodeURIComponent(trackMatch[2]));
     const verifyMatch = url.pathname.match(/^\/verify-document\/(invoice|packing)\/([^/]+)$/);
