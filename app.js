@@ -116,7 +116,7 @@ async function syncProductsFromAPI() {
       // This keeps desktop/mobile clients on the same image source instead of
       // rebuilding a potentially device-specific media path from image_key.
       if (/^data:|^blob:|^https?:\/\//i.test(publicImage)) {
-        image = publicImage;
+        image = normalizeAssetUrl(publicImage);
       } else if (imageKey) {
         if (/^data:|^blob:|^https?:\/\//i.test(imageKey)) {
           image = imageKey;
