@@ -1319,7 +1319,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   let y=490;
   const cols = type === "invoice"
     ? [M,70,350,415,490,W-M]
-    : [M,70,350,405,465,525,W-M];
+    : [M,56,300,340,382,432,492,W-M];
   rect(M,y-24,W-2*M,24,true,"0.90 0.85 0.77");
   if(type === "invoice"){
     text(49,y-16,"NO",7.5,"F2");
@@ -1328,12 +1328,13 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     text(423,y-16,"UNIT PRICE",7.5,"F2");
     text(497,y-16,"AMOUNT",7.5,"F2");
   } else {
-    text(49,y-16,"NO",7.5,"F2");
-    text(82,y-16,"PRODUCT / DESCRIPTION",7.5,"F2");
-    text(363,y-16,"QTY",7.5,"F2");
-    text(417,y-16,"NET WT.",7.5,"F2");
-    text(477,y-16,"DIMENSIONS",7.5,"F2");
-    text(535,y-16,"MATERIAL",7.5,"F2");
+    text(42,y-16,"PKG",7.0,"F2");
+    text(65,y-16,"DESCRIPTION",7.0,"F2");
+    text(307,y-16,"QTY",7.0,"F2");
+    text(347,y-16,"UNIT",7.0,"F2");
+    text(389,y-16,"NET WT.",6.7,"F2");
+    text(439,y-16,"GROSS WT.",6.7,"F2");
+    text(499,y-16,"DIMENSION",6.7,"F2");
   }
   y-=24;
   if(!items.length){
@@ -1346,18 +1347,26 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       const name=wrap(item.product_name || item.name || "Product", type==="invoice"?35:30);
       const rowH=Math.max(42,name.length*10+16);
       line(M,y-rowH,W-M,y-rowH,0.45,tan);
-      text(50,y-18,String(index+1),8,"F1");
-      let yy=y-13;
-      for(const n of name.slice(0,3)){ text(82,yy,n,8,"F1"); yy-=10; }
-      if(type==="packing" && item.sku) { text(82,yy,"SKU: "+item.sku,6.8,"F1",muted); yy-=9; if(item.hs_code) { text(82,yy,"HS: "+item.hs_code,6.8,"F1",muted); yy-=9; } }
-      text(type==="invoice"?365:363,y-18,String(item.quantity ?? item.qty ?? 0),8,"F1");
-      if(type==="invoice"){
+      if(type==="packing"){
+        text(42,y-18,String(index+1),7.5,"F1");
+        let yy=y-13;
+        for(const n of name.slice(0,2)){ text(65,yy,n,7.4,"F1"); yy-=9; }
+        if(item.sku) { text(65,yy,"SKU: "+item.sku,6.1,"F1",muted); yy-=8; }
+        if(item.hs_code) { text(65,yy,"HS: "+item.hs_code,6.1,"F1",muted); yy-=8; }
+        text(307,y-18,String(item.quantity ?? item.qty ?? 0),7.2,"F1");
+        text(347,y-18,String(item.unit || "pcs").slice(0,7),7.0,"F1");
+        const net=Number(item.weight_kg||0);
+        const gross=item.gross_weight_kg!=null?Number(item.gross_weight_kg):null;
+        text(389,y-18,Number.isFinite(net)?net.toFixed(2)+" kg":"-",6.7,"F1");
+        text(439,y-18,gross!=null&&Number.isFinite(gross)?gross.toFixed(2)+" kg":"-",6.7,"F1");
+        text(499,y-18,String(item.dimensions_cm||"-").slice(0,12),6.2,"F1");
+      } else {
+        text(50,y-18,String(index+1),8,"F1");
+        let yy=y-13;
+        for(const n of name.slice(0,3)){ text(82,yy,n,8,"F1"); yy-=10; }
+        text(365,y-18,String(item.quantity ?? item.qty ?? 0),8,"F1");
         text(423,y-18,money(item.unit_price ?? item.price,item.currency),7.2,"F1");
         text(497,y-18,money(item.total_price,item.currency),7.2,"F1");
-      } else {
-        text(417,y-18,Number(item.weight_kg||0).toFixed(1)+" kg",7.2,"F1");
-        text(477,y-18, item.dimensions_cm || "-",6.8,"F1");
-        text(535,y-18,item.material || "Rattan",6.2,"F1");
       }
       y-=rowH;
     });
@@ -1437,8 +1446,11 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       text(xx+12,yy+0.8,entry[1],5.7,"F1",muted);
     });
     const base=cy-16-Math.ceil(checklistMap.length/2)*12;
-    text(M,base-8,"Packing Type: "+String(order.packaging_type||"-").slice(0,28),6.5,"F1",muted);
-    text(M+220,base-8,"Packed By: "+String(order.packed_by||"-").slice(0,22),6.5,"F1",muted);
+    text(M,base-8,"Packing Type: "+String(order.packaging_type||"-").slice(0,24),6.5,"F1",muted);
+    text(M+175,base-8,"Packages: "+String(order.package_count||1),6.5,"F1",muted);
+    text(M+250,base-8,"Net: "+Number(order.net_weight_kg||0).toFixed(2)+" kg",6.5,"F1",muted);
+    text(M+335,base-8,"Gross: "+(order.gross_weight_kg!=null?Number(order.gross_weight_kg).toFixed(2)+" kg":"-"),6.5,"F1",muted);
+    text(M+440,base-8,"Packed By: "+String(order.packed_by||"-").slice(0,15),6.2,"F1",muted);
   }
 
   // Footer.
