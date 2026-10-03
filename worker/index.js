@@ -1001,8 +1001,9 @@ function safePdfText(value) {
 }
 __name(safePdfText, "safePdfText");
 function makeShippingLabelPdf(order, branding = {}) {
-  // Preserve the existing physical label canvas. Do not infer or change label dimensions here.
-  const W=288,H=432,brown="0.24 0.12 0.06",muted="0.42 0.36 0.30";
+  // Standard thermal shipping-label size: 4 x 6 inches = 288 x 432 pt.
+  // Keep the existing shipping-label data; only refresh the visual layout.
+  const W=288,H=432,brown="0.24 0.12 0.06",muted="0.42 0.36 0.30",cream="0.965 0.945 0.91",soft="0.985 0.975 0.95";
   const packageCount=Math.max(1,Math.floor(Number(order.package_count)||1));
   const pages=[];
   const esc=safePdfText;
@@ -1011,41 +1012,53 @@ function makeShippingLabelPdf(order, branding = {}) {
   const courier=String(order.courier||"-");
   const service=String(order.shipping_method||"-");
   const tracking=String(order.tracking_number||order.order_number||"");
+  const jntLogo=pdfJntLogoImage();
+
   for(let packageIndex=1;packageIndex<=packageCount;packageIndex++){
     const cmd=[];
     const text=(x,y,v,size=10,font="F1",color=brown)=>cmd.push(color+" rg","BT",`/${font} ${size} Tf`,`1 0 0 1 ${x} ${y} Tm`,`(${esc(v)}) Tj`,"ET");
-    const rect=(x,y,w,h,color="0.96 0.94 0.90")=>cmd.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
-    rect(0,0,W,H);
-    text(24,402,String(branding.brand||"PALMA ROTAN"),20,"F2");
-    const carrierUpper=courier.toUpperCase();
-    if(carrierUpper.includes("DHL")){
-      rect(205,394,58,22,"0.98 0.78 0.04");
-      text(214,401,"DHL",13,"F2","0.82 0.03 0.03");
-    }else if(carrierUpper.includes("J&T")||carrierUpper.includes("JNT")||carrierUpper.includes("JET")){
-      rect(205,394,58,22,"0.82 0.03 0.03");
-      text(213,401,"J&T",12,"F2","1 1 1");
-    }else{
-      text(205,401,carrierUpper.slice(0,9),8,"F2",brown);
+    const rect=(x,y,w,h,color=cream)=>cmd.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
+    const line=(x1,y1,x2,y2,width=0.7,color="0.72 0.55 0.35")=>cmd.push(color+" RG",`${width} w`,`${x1} ${y1} m ${x2} ${y2} l S`);
+
+    rect(0,0,W,H,cream);
+    rect(0,382,W,50,soft);
+
+    // Carrier-first header, matching the Packing List visual language.
+    cmd.push("q","58 0 0 25 204 395 cm","/JNT Do","Q");
+    text(24,405,String(branding.brand||"PALMA ROTAN"),16,"F2");
+    text(24,389,"SHIPPING LABEL",8.5,"F2",muted);
+    line(18,378,270,378,1.0,brown);
+
+    text(24,356,"SHIP TO",8,"F2",muted);
+    text(24,337,name,13,"F2");
+    text(24,318,address.slice(0,48),8);
+    if(order.email)text(24,302,String(order.email).slice(0,40),7.7,"F1",muted);
+    if(order.phone)text(24,288,String(order.phone).slice(0,32),7.7,"F1",muted);
+
+    rect(18,244,252,34,"0.88 0.96 0.90");
+    text(28,257,"PROVIDER: "+courier,9,"F2");
+    text(142,257,"SERVICE: "+service.slice(0,18),9,"F2");
+
+    text(24,222,"TRACKING NUMBER",8,"F2",muted);
+    text(24,203,order.tracking_number?String(order.tracking_number):"NOT ASSIGNED",15,"F2");
+    if(tracking){
+      drawCode128(cmd,24,134,240,52,tracking);
+      text(24,120,tracking.slice(0,38),8,"F2");
     }
-    text(24,386,"SHIPPING LABEL",10,"F2",muted);
-    text(24,360,"SHIP TO",8,"F2",muted);
-    text(24,344,name,13,"F2");
-    text(24,326,address.slice(0,42),8);
-    if(order.email)text(24,312,String(order.email).slice(0,38),8,"F1",muted);
-    if(order.phone)text(24,298,String(order.phone).slice(0,30),8,"F1",muted);
-    rect(18,242,252,36,"0.88 0.96 0.90");
-    text(28,256,"PROVIDER: "+courier,9,"F2");
-    text(142,256,"SERVICE: "+service.slice(0,18),9,"F2");
-    text(24,220,"TRACKING NUMBER",8,"F2",muted);
-    text(24,202,order.tracking_number?String(order.tracking_number):"NOT ASSIGNED",15,"F2");
-    if(tracking){drawCode128(cmd,24,134,240,52,tracking);text(24,120,tracking.slice(0,38),8,"F2");}
-    text(24,96,"ORDER NO.",7,"F2",muted); text(24,82,String(order.order_number||"-"),9);
-    text(150,96,"PACKAGE",7,"F2",muted); text(150,82,`${packageIndex} / ${packageCount}`,9);
-    text(24,52,"PACKING LIST",7,"F2",muted); text(24,38,String(order.packing_number||"-"),8);
-    text(150,52,"PRINT ALL LABELS",7,"F2",muted);
+
+    line(18,103,270,103,0.7);
+    text(24,88,"ORDER NO.",7,"F2",muted);
+    text(24,73,String(order.order_number||"-"),9);
+    text(150,88,"PACKAGE",7,"F2",muted);
+    text(150,73,`${packageIndex} / ${packageCount}`,9);
+    text(24,53,"PACKING LIST",7,"F2",muted);
+    text(24,38,String(order.packing_number||"-"),8);
+    text(150,53,"PRINT ALL LABELS",7,"F2",muted);
     text(24,20,"Code 128 • Shipment identification",6,"F1",muted);
+
     pages.push(cmd.join("\n")+"\n");
   }
+
   const pageBase=3,contentBase=3+packageCount*2;
   const objects=[
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -1053,13 +1066,19 @@ function makeShippingLabelPdf(order, branding = {}) {
   ];
   for(let i=0;i<pages.length;i++){
     const pageObj=pageBase+i*2,contentObj=pageObj+1;
-    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${contentBase} 0 R /F2 ${contentBase+1} 0 R >> >> /Contents ${contentObj} 0 R >>`);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${contentBase} 0 R /F2 ${contentBase+1} 0 R >> /XObject << /JNT ${contentBase+2} 0 R >> >> /Contents ${contentObj} 0 R >>`);
     objects.push(`<< /Length ${new TextEncoder().encode(pages[i]).length} >>\nstream\n${pages[i]}endstream`);
   }
   objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  objects.push(`<< /Type /XObject /Subtype /Image /Width ${jntLogo.width} /Height ${jntLogo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jntLogo.jpeg.length} >>\nstream\n`,jntLogo.jpeg,"\nendstream");
+
   let pdf="%PDF-1.4\n",offs=[0];
-  for(let i=0;i<objects.length;i++){offs.push(new TextEncoder().encode(pdf).length);pdf+=(i+1)+" 0 obj\n"+objects[i]+"\nendobj\n"}
+  for(let i=0;i<objects.length;i++){
+    offs.push(new TextEncoder().encode(pdf).length);
+    if(typeof objects[i]==="string") pdf+=(i+1)+" 0 obj\n"+objects[i]+"\nendobj\n";
+    else pdf+=(i+1)+" 0 obj\n"+objects[i].join("")+"\nendobj\n";
+  }
   const xref=new TextEncoder().encode(pdf).length;
   pdf+="xref\n0 "+(objects.length+1)+"\n0000000000 65535 f \n";
   for(let i=1;i<offs.length;i++)pdf+=String(offs[i]).padStart(10,"0")+" 00000 n \n";
