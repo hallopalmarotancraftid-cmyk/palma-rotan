@@ -1251,7 +1251,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       for(const [start,len] of matrix.rows[row]) commands.push(qx+start*unit+" "+py+" "+(len*unit+0.02)+" "+(unit+0.02)+" re f");
     }
     commands.push("Q");
-    if(caption) text(x+9,y+h-23,caption,5.8,"F2",brown);
+
   };
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
     rect(x,y,w,h,false);
@@ -1472,7 +1472,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     }else if(trackingQrImage){
       const qs=70,qx=M+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRTrack Do","Q");
-      text(M+9,barcodeY+5,"SCAN TO TRACK",5.8,"F2",brown);
+
     }else{
       drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",null,"SCAN TO TRACK");
     }
@@ -1483,7 +1483,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     }else if(authQrImage){
       const qs=70,qx=M+(bw+10)*2+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRAuth Do","Q");
-      text(M+(bw+10)*2+9,barcodeY+5,"SCAN FOR ORDER DATA",5.5,"F2",brown);
+
     }else{
       drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",null,"SCAN FOR ORDER DATA");
     }
