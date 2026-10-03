@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-qr-3";
+var BUILD_ID = "2026-10-03-packing-qr-4";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1205,7 +1205,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       qrMatrix=await qrPngMatrix(String(order.document_verification_url||""));
     }catch(error){console.error("DOCUMENT_QR_ERROR",{orderId:order.id,type,message:error?.message||String(error)});}
     try{
-      const trackingValue=String(order.tracking_url||carrierTrackingUrl(order.courier||order.shipping_method||"",order.tracking_number||"")).trim();
+      const trackingValue=carrierTrackingUrl(order.courier||order.shipping_method||"",order.tracking_number||"").trim();
       trackingQrMatrix=await qrPngMatrix(trackingValue);
     }catch(error){console.error("TRACKING_QR_ERROR",{orderId:order.id,type,message:error?.message||String(error)});}
   }
@@ -1417,6 +1417,18 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
 
   }
 
+  if(type==="invoice" && qrMatrix){
+    const qrSize=88,qrX=W-M-qrSize,qrY=118,unit=qrSize/qrMatrix.width;
+    commands.push("q 1 1 1 rg",qrX+" "+qrY+" "+qrSize+" "+qrSize+" re f Q");
+    commands.push("q 0 0 0 rg");
+    for(let row=0;row<qrMatrix.rows.length;row++){
+      const py=qrY+qrSize-(row+1)*unit;
+      for(const [start,len] of qrMatrix.rows[row]) commands.push(qrX+start*unit+" "+py+" "+(len*unit+0.02)+" "+(unit+0.02)+" re f");
+    }
+    commands.push("Q");
+    text(qrX,qrY-12,"INVOICE AUTHENTICATION QR",6.0,"F2",muted);
+    text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
+  }
   // Packing List: real phone-scannable QR codes for tracking and authentication.
   // The waybill remains a Code128 barcode for conventional warehouse scanners.
   if(type==="packing"){
