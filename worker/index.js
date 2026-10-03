@@ -812,18 +812,25 @@ async function adminPacking(request,env){
   await ensureShippingSchema(env);
   const admin=await requireAdmin(request,env);
   if(!admin)return json({error:"Unauthorized"},401,cors(request));
+  if(request.method==="GET"){
+    const url=new URL(request.url);
+    const orderId=String(url.searchParams.get("orderId")||"").trim();
+    if(!orderId)return json({error:"orderId wajib diisi"},400,cors(request));
+    const order=await env.DB.prepare("SELECT id,order_number,order_status,payment_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(orderId,orderId).first();
+    if(!order)return json({error:"Order tidak ditemukan"},404,cors(request));
+    const pack=await env.DB.prepare("SELECT * FROM packing_orders WHERE order_id=?").bind(order.id).first();
+    if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
+    let checklist={};
+    try{checklist=pack.packing_checklist_json?JSON.parse(pack.packing_checklist_json):{}}catch(_){checklist={}}
+    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
+  }
+
   const body=await request.json().catch(()=>({}));
   if(!body.orderId)return json({error:"orderId wajib diisi"},400,cors(request));
   const order=await env.DB.prepare("SELECT id,order_number,order_status,payment_status FROM orders WHERE id=? OR order_number=? LIMIT 1").bind(body.orderId,body.orderId).first();
   if(!order)return json({error:"Order tidak ditemukan"},404,cors(request));
   const pack=await env.DB.prepare("SELECT * FROM packing_orders WHERE order_id=?").bind(order.id).first();
   if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
-
-  if(request.method==="GET"){
-    let checklist={};
-    try{checklist=pack.packing_checklist_json?JSON.parse(pack.packing_checklist_json):{}}catch(_){checklist={}}
-    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
-  }
 
   const checklist=body.checklist&&typeof body.checklist==="object"?body.checklist:{};
   const packagingType=String(body.packagingType||pack.packaging_type||"").trim();
