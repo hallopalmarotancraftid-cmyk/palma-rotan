@@ -1762,10 +1762,28 @@ async function wooCommerceShippingRatesProxy(request,env){
     body:raw
   });
   const body=await response.text();
+  const contentType=String(response.headers.get("content-type")||"");
+  if(!contentType.toLowerCase().includes("application/json")){
+    return new Response(JSON.stringify({
+      ok:false,
+      error:"WooCommerce shipping endpoint returned a non-JSON response",
+      upstreamStatus:response.status,
+      upstreamContentType:contentType||"unknown",
+      upstreamPreview:body.replace(/\s+/g," ").slice(0,500)
+    }),{
+      status:502,
+      headers:{
+        "content-type":"application/json; charset=utf-8",
+        "cache-control":"no-store",
+        "access-control-allow-origin":cors(request),
+        "vary":"Origin"
+      }
+    });
+  }
   return new Response(body,{
     status:response.status,
     headers:{
-      "content-type":response.headers.get("content-type")||"application/json; charset=utf-8",
+      "content-type":contentType||"application/json; charset=utf-8",
       "cache-control":"no-store",
       "access-control-allow-origin":cors(request),
       "vary":"Origin"
