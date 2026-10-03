@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-order-verify-1";
+var BUILD_ID = "2026-10-03-order-verify-sync-2";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1705,30 +1705,49 @@ async function loadPdfOrderItems(env, order) {
     String(order.order_number||"").trim().replace(/^#/,"")
   ].filter(Boolean))];
 
-  let raw=[];
+  // A legacy/sync order can temporarily have item rows stored under more than
+  // one reference (internal id and order number). Never stop at the first
+  // non-empty source: choose the most complete set so PDF and QR verification
+  // render the same products.
+  const candidates=[];
   for(const ref of refs){
     const result=await env.DB.prepare(
       "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE TRIM(CAST(oi.order_id AS TEXT))=? ORDER BY oi.rowid"
     ).bind(ref).all();
-    raw=result.results||[];
-    if(raw.length)break;
+    const rows=result.results||[];
+    if(rows.length)candidates.push({ref,rows,exact:String(ref)===String(order.id||"").trim()});
   }
 
-  if(!raw.length && order.order_number){
-    raw=(await env.DB.prepare(
+  if(!candidates.length && order.order_number){
+    const rows=(await env.DB.prepare(
       "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE lower(TRIM(CAST(oi.order_id AS TEXT)))=lower(TRIM(?)) ORDER BY oi.rowid"
     ).bind(String(order.order_number)).all()).results||[];
+    if(rows.length)candidates.push({ref:String(order.order_number),rows,exact:false});
   }
 
-  if(!raw.length && order.order_number){
-    raw=(await env.DB.prepare(
+  if(!candidates.length && order.order_number){
+    const rows=(await env.DB.prepare(
       "SELECT oi.*,p.weight_kg,p.dimensions_cm,p.sku AS product_sku,p.material,p.hs_code,p.package_type FROM order_items oi LEFT JOIN products p ON p.id=oi.product_id WHERE oi.order_id=(SELECT id FROM orders WHERE lower(TRIM(order_number))=lower(TRIM(?)) LIMIT 1) ORDER BY oi.rowid"
     ).bind(String(order.order_number)).all()).results||[];
+    if(rows.length)candidates.push({ref:"orders.id-by-number",rows,exact:true});
   }
 
-  if(!raw.length)return [];
+  if(!candidates.length)return [];
 
-  return raw.map((item,index)=>({
+  candidates.sort((a,b)=>(b.rows.length-a.rows.length)||Number(b.exact)-Number(a.exact));
+  const chosen=candidates[0];
+
+  if(candidates.length>1 && new Set(candidates.map(x=>x.rows.length)).size>1){
+    console.warn("ORDER_ITEM_SOURCE_MISMATCH",{
+      orderId:String(order.id||""),
+      orderNumber:String(order.order_number||""),
+      selectedRef:chosen.ref,
+      selectedCount:chosen.rows.length,
+      candidates:candidates.map(x=>({ref:x.ref,count:x.rows.length,exact:x.exact}))
+    });
+  }
+
+  return chosen.rows.map((item,index)=>({
     ...item,
     id:item.id||("pdf_item_"+index),
     product_name:item.product_name||item.name||"Product",
@@ -1747,7 +1766,6 @@ async function loadPdfOrderItems(env, order) {
     package_type:item.package_type||""
   }));
 }
-__name(loadPdfOrderItems, "loadPdfOrderItems");
 
 async function ensureDocumentAuthSchema(env){
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS document_authentications (
