@@ -188,7 +188,7 @@ function changeQty(id,d){let c=cart();const i=c.find(x=>x.id===id),p=data.produc
 function shippingFee(country,method,currency){const base={ID:6,US:45,CA:48,GB:42,AU:38,SG:18,DE:44,FR:44,NL:44}[country]??55;const usd=method==='Express'?base*1.7:base;return usd*(rates[currency||'USD']||1)}
 async function loadShippingRates(){
   const form=document.getElementById('checkoutForm'); if(!form)return;
-  const api=(window.PALMA_COMMERCE_BASE||'').replace(/\/$/,''); if(!api)return;
+  const api=(window.PALMA_API_BASE||'').replace(/\/$/,''); if(!api)return;
   const country=form.querySelector('[name="country"]')?.value||'', postal=form.querySelector('[name="postalCode"]')?.value||'';
   if(!country||!postal)return;
   const select=form.querySelector('[name="method"]'), quote=form.querySelector('[name="shippingQuoteId"]');
@@ -196,7 +196,7 @@ async function loadShippingRates(){
   const box=document.getElementById('palmaShippingRates'); if(!select||!quote)return;
   if(box)box.textContent=data.settings.language==='ID'?'Mengambil ongkir...':'Calculating shipping...';
   try{
-    const rateEndpoint=api+'/wp-json/palma/v1/shipping-rates?_palma_cache='+Date.now();
+    const rateEndpoint=api+'/api/integrations/woocommerce/shipping-rates?_palma_cache='+Date.now();
     const r=await fetch(rateEndpoint,{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({
       items:cart().map(x=>{const p=data.products.find(p=>p.id===x.id);return {sku:p?.sku||p?.sku_code||x.id,quantity:x.qty}}),
       shippingAddress:{country,postalCode:postal}
