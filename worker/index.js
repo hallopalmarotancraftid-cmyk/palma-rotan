@@ -1473,7 +1473,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
   addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
   addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> /Contents 7 0 R >>`);
+  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> /Contents 7 0 R >> >>`);
   addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
