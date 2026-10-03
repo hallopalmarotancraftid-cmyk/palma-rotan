@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-final-1";
+var BUILD_ID = "2026-10-03-packing-final-2";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1266,7 +1266,30 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   }
   try{
     if(type==="invoice" || type==="packing"){
-      const authValue=String(order.document_verification_url||"").trim();
+      const authPayload={
+        type:"PALMA_ROTAN_ORDER_AUTH",
+        orderNumber:String(order.order_number||""),
+        invoiceNumber:String(order.invoice_number||""),
+        packingNumber:String(order.packing_number||""),
+        productItems:(items||[]).map(item=>({
+          product:String(item.product_name||item.name||""),
+          sku:String(item.sku||item.product_sku||""),
+          quantity:Number(item.quantity??item.qty??0),
+          unit:String(item.unit||"pcs"),
+          weightKg:Number(item.weight_kg??0)
+        })),
+        shipping:{
+          courier:String(order.courier||order.shipping_method||""),
+          trackingNumber:String(order.tracking_number||""),
+          shippingStatus:String(order.order_status||order.packing_status||""),
+          packages:Number(order.package_count||1),
+          netWeightKg:Number(order.net_weight_kg||0),
+          grossWeightKg:Number(order.gross_weight_kg??0)
+        },
+        destination:String(order.shipping_address_json||""),
+        verifiedAt:String(order.updated_at||order.created_at||"")
+      };
+      const authValue=JSON.stringify(authPayload);
       const trackingValue=carrierTrackingUrl(order.courier||order.shipping_method||"",order.tracking_number||"").trim();
       if(authValue) authQrImage=await qrJpegImage(authValue);
       if(trackingValue) trackingQrImage=await qrJpegImage(trackingValue);
@@ -1490,7 +1513,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     if(authQrImage){
       commands.push("q",qrSize+" 0 0 "+qrSize+" "+qrX+" "+qrY+" cm","/QRAuth Do","Q");
       text(qrX,qrY-12,"INVOICE AUTHENTICATION QR",6.0,"F2",muted);
-      text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
+      text(qrX+9,qrY-23,"SCAN FOR ORDER DATA",6.2,"F1",muted);
     }else if(qrMatrix){
       const unit=qrSize/qrMatrix.width;
       commands.push("q 1 1 1 rg",qrX+" "+qrY+" "+qrSize+" "+qrSize+" re f Q");
@@ -1523,14 +1546,13 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     if(authQrImage){
       const qs=70,qx=M+(bw+10)*2+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRAuth Do","Q");
-      text(M+(bw+10)*2+9,barcodeY+5,"SCAN TO VERIFY",5.8,"F2",brown);
+      text(M+(bw+10)*2+9,barcodeY+5,"SCAN FOR ORDER DATA",5.5,"F2",brown);
     }else{
       drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN TO VERIFY");
     }
   }
   if(type==="packing"){
-    const barcodeY=Math.max(y-88,92);
-    const cy=Math.max(barcodeY-22,115);
+    const cy=Math.max(barcodeY-28,72);
     text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
     const checklistMap=[
       ["pallet","Pallet"],
@@ -1562,8 +1584,8 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
-  text(86,24,"Handcrafted Rattan • Natural Materials • Crafted in Indonesia",6.2,"F1",muted);
-  text(390,24,"PALMA ROTAN",7,"F2");
+  text(86,10,"Handcrafted Rattan • Natural Materials • Crafted in Indonesia",6.2,"F1",muted);
+  text(390,10,"PALMA ROTAN",7,"F2");
 
   const stream=commands.join("\n")+"\n";
   const te=new TextEncoder();
