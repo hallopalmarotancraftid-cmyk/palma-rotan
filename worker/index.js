@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-qr-5";
+var BUILD_ID = "2026-10-03-packing-qr-6";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1166,6 +1166,46 @@ async function qrPngMatrix(value) {
   throw lastError||new Error("QR generation failed");
 }
 
+async function qrJpegImage(value) {
+  const data=String(value||"").trim();
+  if(!data) return null;
+  const urls=[
+    "https://quickchart.io/qr?text="+encodeURIComponent(data)+"&size=320&margin=2&ecLevel=H&format=jpg",
+    "https://api.qrserver.com/v1/create-qr-code/?size=320x320&ecc=H&margin=2&format=jpg&data="+encodeURIComponent(data)
+  ];
+  let lastError=null;
+  for(const url of urls){
+    try{
+      const response=await fetch(url,{headers:{"accept":"image/jpeg"},cache:"no-store"});
+      if(!response.ok) throw new Error("QR JPEG service HTTP "+response.status);
+      const bytes=Buffer.from(await response.arrayBuffer());
+      if(bytes.length<4||bytes[0]!==0xff||bytes[1]!==0xd8) throw new Error("QR JPEG response tidak valid");
+      let p=2,width=0,height=0;
+      while(p+9<bytes.length){
+        while(p<bytes.length&&bytes[p]!==0xff)p++;
+        if(p+1>=bytes.length)break;
+        let marker=bytes[p+1]; p+=2;
+        while(marker===0xff&&p<bytes.length){marker=bytes[p++];}
+        if(marker===0xd8||marker===0xd9||marker===0x01)continue;
+        if(p+2>bytes.length)break;
+        const len=bytes.readUInt16BE(p);
+        if(marker>=0xc0&&marker<=0xcf&&![0xc4,0xc8,0xcc].includes(marker)){
+          if(p+7>=bytes.length)break;
+          height=bytes.readUInt16BE(p+3); width=bytes.readUInt16BE(p+5);
+          if(width&&height)return {width,height,jpeg:bytes};
+        }
+        p+=len;
+      }
+      throw new Error("QR JPEG dimensions tidak ditemukan");
+    }catch(error){
+      lastError=error;
+      console.error("QR_JPEG_ERROR",{url,message:error?.message||String(error)});
+    }
+  }
+  throw lastError||new Error("QR JPEG generation failed");
+}
+__name(qrJpegImage,"qrJpegImage");
+
 async function makeProfessionalPdf(type, order, items, branding = {}) {
   const esc = safePdfText;
   const W = 595, H = 842, M = 42;
@@ -1210,6 +1250,8 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const logoImage = pdfLogoImage();
   let qrMatrix=null;
   let trackingQrMatrix=null;
+  let authQrImage=null;
+  let trackingQrImage=null;
   if(type==="invoice" || type==="packing"){
     try{
       qrMatrix=await qrPngMatrix(String(order.document_verification_url||""));
@@ -1219,6 +1261,21 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       trackingQrMatrix=await qrPngMatrix(trackingValue);
     }catch(error){console.error("TRACKING_QR_ERROR",{orderId:order.id,type,message:error?.message||String(error)});}
   }
+  try{
+    if(type==="invoice" || type==="packing"){
+      const authValue=String(order.document_verification_url||"").trim();
+      const trackingValue=carrierTrackingUrl(order.courier||order.shipping_method||"",order.tracking_number||"").trim();
+      if(authValue) authQrImage=await qrJpegImage(authValue);
+      if(trackingValue) trackingQrImage=await qrJpegImage(trackingValue);
+    }
+  }catch(error){
+    console.error("QR_JPEG_PREP_ERROR",{orderId:order.id,type,message:error?.message||String(error)});
+  }
+  const drawQrImage = (x,y,size,image) => {
+    if(!image)return false;
+    commands.push("q",size+" 0 0 "+size+" "+x+" "+y+" cm","/QRIMG Do","Q");
+    return true;
+  };
   const drawQrSlot = (x,y,w,h,title,matrix,caption) => {
     rect(x,y,w,h,false);
     text(x+9,y+h-14,title,7.0,"F2",muted);
@@ -1443,9 +1500,25 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   // The waybill remains a Code128 barcode for conventional warehouse scanners.
   if(type==="packing"){
     const barcodeY=Math.max(y-88,92), bw=(W-2*M-20)/3;
-    drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",trackingQrMatrix,"SCAN TO TRACK");
+    rect(M,barcodeY,bw,92,false);
+    text(M+9,barcodeY+78,"TRACKING QR",7.0,"F2",muted);
+    if(trackingQrImage){
+      const qs=72,qx=M+(bw-qs)/2,qy=barcodeY+8;
+      commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRTrack Do","Q");
+      text(M+9,barcodeY+5,"SCAN TO TRACK",5.8,"F2",brown);
+    }else{
+      drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",trackingQrMatrix,"SCAN TO TRACK");
+    }
     barcodeSlot(M+bw+10,barcodeY,bw,92,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
-    drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN TO VERIFY");
+    rect(M+(bw+10)*2,barcodeY,bw,92,false);
+    text(M+(bw+10)*2+9,barcodeY+78,"ORDER AUTHENTICATION QR",7.0,"F2",muted);
+    if(authQrImage){
+      const qs=72,qx=M+(bw+10)*2+(bw-qs)/2,qy=barcodeY+8;
+      commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRAuth Do","Q");
+      text(M+(bw+10)*2+9,barcodeY+5,"SCAN TO VERIFY",5.8,"F2",brown);
+    }else{
+      drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN TO VERIFY");
+    }
   }
   if(type==="packing"){
     const barcodeY=Math.max(y-88,92);
@@ -1493,16 +1566,20 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const addObj=(n,body)=>{offsets[n]=total;addText(`${n} 0 obj\n`);if(typeof body==="string")addText(body);else{addText(body.head);add(body.data);addText(body.tail);}addText("\nendobj\n");};
   addObj(1,"<< /Type /Catalog /Pages 2 0 R >>");
   addObj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R >> >> /Contents 7 0 R >>`);
+  addObj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Logo 8 0 R /QRTrack 9 0 R /QRAuth 10 0 R >> >> /Contents 7 0 R >>`);
   addObj(4,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   addObj(5,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   addObj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>");
   addObj(7,{head:`<< /Length ${te.encode(stream).length} >>\nstream\n`,data:te.encode(stream),tail:"endstream"});
   addObj(8,{head:`<< /Type /XObject /Subtype /Image /Width ${logoImage.width} /Height ${logoImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${logoImage.rgb.length} >>\nstream\n`,data:logoImage.rgb,tail:"\nendstream"});
+  const qrTrack=trackingQrImage||{width:1,height:1,jpeg:Buffer.from([0xff,0xd8,0xff,0xd9])};
+  const qrAuth=authQrImage||{width:1,height:1,jpeg:Buffer.from([0xff,0xd8,0xff,0xd9])};
+  addObj(9,{head:`<< /Type /XObject /Subtype /Image /Width ${qrTrack.width} /Height ${qrTrack.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${qrTrack.jpeg.length} >>\nstream\n`,data:qrTrack.jpeg,tail:"\nendstream"});
+  addObj(10,{head:`<< /Type /XObject /Subtype /Image /Width ${qrAuth.width} /Height ${qrAuth.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${qrAuth.jpeg.length} >>\nstream\n`,data:qrAuth.jpeg,tail:"\nendstream"});
   const xref=total;
-  addText("xref\n0 9\n0000000000 65535 f \n");
-  for(let i=1;i<=8;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
-  addText(`trailer\n<< /Size 9 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  addText("xref\n0 11\n0000000000 65535 f \n");
+  for(let i=1;i<=10;i++)addText(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
+  addText(`trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
