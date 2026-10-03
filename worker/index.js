@@ -1690,6 +1690,69 @@ async function loadPdfOrderItems(env, order) {
   candidates.sort((a,b)=>(b.rows.length-a.rows.length)||Number(b.exact)-Number(a.exact));
   const chosen=candidates[0];
 
+  // WooCommerce is the source of truth for product logistics data. Refresh
+  // weight/dimensions at PDF time so changes made in WooCommerce also apply
+  // to existing orders instead of remaining stuck at the old DB snapshot.
+  let wooProducts=[];
+  try{
+    const commerceBase=String(env.PALMA_COMMERCE_BASE||"https://palmarotancraft.whf.bz").replace(/\/$/,"");
+    const wooResponse=await fetch(commerceBase+"/wp-json/palma/v1/products",{
+      method:"GET",
+      headers:{"accept":"application/json"},
+      cache:"no-store"
+    });
+    if(wooResponse.ok){
+      const payload=await wooResponse.json();
+      wooProducts=Array.isArray(payload)?payload:
+        (Array.isArray(payload?.products)?payload.products:
+        (Array.isArray(payload?.data)?payload.data:[]));
+    }
+  }catch(error){
+    console.warn("WOO_PDF_LOGISTICS_REFRESH_FAILED",{
+      orderId:String(order.id||""),
+      message:error?.message||String(error)
+    });
+  }
+
+  if(wooProducts.length){
+    for(const item of chosen.rows){
+      const localProductId=String(item.product_id||"").trim();
+      const localSourceId=localProductId.replace(/^wc-/,"");
+      const localSku=String(item.sku||item.product_sku||"").trim();
+      const wp=wooProducts.find(p=>{
+        const ids=[
+          p?.id,p?.productId,p?.sourceProductId,p?.source_product_id,
+          p?.product_id,p?.woocommerce_id,p?.woocommerceId
+        ].map(v=>String(v??"").trim()).filter(Boolean);
+        const skus=[p?.sku,p?.SKU].map(v=>String(v??"").trim()).filter(Boolean);
+        return ids.includes(localSourceId)||ids.includes(localProductId)||skus.includes(localSku);
+      });
+      if(!wp) continue;
+
+      const rawWeight=wp.weightKg??wp.weight_kg??wp.weight??wp.product?.weightKg??wp.product?.weight_kg??wp.product?.weight;
+      const freshWeight=Number.parseFloat(String(rawWeight??"").replace(/[^0-9.,-]/g,"").replace(",", "."));
+      if(Number.isFinite(freshWeight) && freshWeight>0) item.weight_kg=freshWeight;
+
+      const rawDim=wp.dimensionsCm??wp.dimensions_cm??wp.dimensions??wp.product?.dimensionsCm??wp.product?.dimensions_cm??wp.product?.dimensions;
+      if(rawDim){
+        if(typeof rawDim==="object"){
+          const l=rawDim.length??rawDim.l??"";
+          const w=rawDim.width??rawDim.w??"";
+          const h=rawDim.height??rawDim.h??"";
+          if([l,w,h].every(v=>String(v).trim()!=="")) item.dimensions_cm=`${l} x ${w} x ${h} cm`;
+        }else{
+          item.dimensions_cm=String(rawDim);
+        }
+      }
+
+      // Keep the PALMA DB snapshot synchronized for subsequent documents.
+      try{
+        await env.DB.prepare("UPDATE products SET weight_kg=?,dimensions_cm=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+          .bind(Number(item.weight_kg||0),String(item.dimensions_cm||""),item.product_id).run();
+      }catch(_){}
+    }
+  }
+
   if(candidates.length>1 && new Set(candidates.map(x=>x.rows.length)).size>1){
     console.warn("ORDER_ITEM_SOURCE_MISMATCH",{
       orderId:String(order.id||""),
