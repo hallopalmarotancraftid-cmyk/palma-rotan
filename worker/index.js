@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-qr-4";
+var BUILD_ID = "2026-10-03-packing-qr-5";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1107,53 +1107,63 @@ function pdfLogoImage() {
 async function qrPngMatrix(value) {
   const data=String(value||"").trim();
   if(!data) return null;
-  const url="https://api.qrserver.com/v1/create-qr-code/?size=240x240&ecc=H&margin=2&format=png&data="+encodeURIComponent(data);
-  const response=await fetch(url,{headers:{"accept":"image/png"},cache:"no-store"});
-  if(!response.ok) throw new Error("QR service HTTP "+response.status);
-  const png=Buffer.from(await response.arrayBuffer());
-  if(png.length<32||png.toString("ascii",1,4)!=="PNG") throw new Error("QR response bukan PNG");
-  const u32=o=>png.readUInt32BE(o);
-  const width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
-  if(depth!==8||(colorType!==2&&colorType!==6)) throw new Error("QR PNG format tidak didukung");
-  const channels=colorType===6?4:3;
-  const idats=[];let p=8;
-  while(p+12<=png.length){
-    const len=u32(p),kind=png.toString("ascii",p+4,p+8),ds=p+8,de=ds+len;
-    if(kind==="IDAT") idats.push(png.subarray(ds,de));
-    p=de+4;
-    if(kind==="IEND") break;
-  }
-  const raw=inflateSync(Buffer.concat(idats));
-  const stride=width*channels;
-  const rows=[];
-  let src=0,prev=Buffer.alloc(stride);
-  const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
-  for(let y=0;y<height;y++){
-    const filter=raw[src++],row=Buffer.alloc(stride);
-    for(let x=0;x<stride;x++){
-      const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];
-      let out=v;
-      if(filter===1) out=(v+left)&255;
-      else if(filter===2) out=(v+up)&255;
-      else if(filter===3) out=(v+Math.floor((left+up)/2))&255;
-      else if(filter===4) out=(v+paeth(left,up,ul))&255;
-      else if(filter!==0) throw new Error("Unsupported QR PNG filter");
-      row[x]=out;
+  const urls=[
+    "https://quickchart.io/qr?text="+encodeURIComponent(data)+"&size=240&margin=2&ecLevel=H&format=png",
+    "https://api.qrserver.com/v1/create-qr-code/?size=240x240&ecc=H&margin=2&format=png&data="+encodeURIComponent(data)
+  ];
+  let lastError=null;
+  for(const url of urls){
+    try{
+      const response=await fetch(url,{headers:{"accept":"image/png"},cache:"no-store"});
+      if(!response.ok) throw new Error("QR service HTTP "+response.status);
+      const png=Buffer.from(await response.arrayBuffer());
+      if(png.length<32||png.toString("ascii",1,4)!=="PNG") throw new Error("QR response bukan PNG");
+      const u32=o=>png.readUInt32BE(o);
+      const width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
+      if(depth!==8||(colorType!==2&&colorType!==6)) throw new Error("QR PNG format tidak didukung");
+      const channels=colorType===6?4:3;
+      const idats=[];let p=8;
+      while(p+12<=png.length){
+        const len=u32(p),kind=png.toString("ascii",p+4,p+8),ds=p+8,de=ds+len;
+        if(kind==="IDAT") idats.push(png.subarray(ds,de));
+        p=de+4;
+        if(kind==="IEND") break;
+      }
+      const raw=inflateSync(Buffer.concat(idats));
+      const stride=width*channels;
+      const rows=[];
+      let src=0,prev=Buffer.alloc(stride);
+      const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
+      for(let y=0;y<height;y++){
+        const filter=raw[src++],row=Buffer.alloc(stride);
+        for(let x=0;x<stride;x++){
+          const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];
+          let out=v;
+          if(filter===1) out=(v+left)&255;
+          else if(filter===2) out=(v+up)&255;
+          else if(filter===3) out=(v+Math.floor((left+up)/2))&255;
+          else if(filter===4) out=(v+paeth(left,up,ul))&255;
+          else if(filter!==0) throw new Error("Unsupported QR PNG filter");
+          row[x]=out;
+        }
+        const runs=[];let runStart=-1;
+        for(let x=0;x<width;x++){
+          const j=x*channels,alpha=channels===4?row[j+3]:255;
+          const lum=(0.299*row[j])+(0.587*row[j+1])+(0.114*row[j+2]);
+          const dark=alpha>32&&lum<128;
+          if(dark&&runStart<0) runStart=x;
+          if(!dark&&runStart>=0){runs.push([runStart,x-runStart]);runStart=-1;}
+        }
+        if(runStart>=0) runs.push([runStart,width-runStart]);
+        rows.push(runs);prev=row;
+      }
+      return {width,height,rows};
+    }catch(error){
+      lastError=error;
+      console.error("QR_GENERATION_ERROR",{url,message:error?.message||String(error)});
     }
-    const runs=[];let runStart=-1;
-    for(let x=0;x<width;x++){
-      const j=x*channels;
-      const alpha=channels===4?row[j+3]:255;
-      const lum=(0.299*row[j])+(0.587*row[j+1])+(0.114*row[j+2]);
-      const dark=alpha>32&&lum<128;
-      if(dark&&runStart<0) runStart=x;
-      if(!dark&&runStart>=0){runs.push([runStart,x-runStart]);runStart=-1;}
-    }
-    if(runStart>=0) runs.push([runStart,width-runStart]);
-    rows.push(runs);
-    prev=row;
   }
-  return {width,height,rows};
+  throw lastError||new Error("QR generation failed");
 }
 
 async function makeProfessionalPdf(type, order, items, branding = {}) {
@@ -1438,7 +1448,8 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN TO VERIFY");
   }
   if(type==="packing"){
-    const cy=Math.max(y-92,138);
+    const barcodeY=Math.max(y-88,92);
+    const cy=Math.max(barcodeY-26,86);
     text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
     const checklistMap=[
       ["pallet","Pallet"],
