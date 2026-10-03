@@ -590,8 +590,24 @@ async function wooCommerceOrderSync(request,env){
     const qty=Math.max(1,Number(item.quantity)||1);
     const unitPrice=Number(item.unitPrice)||0;
     const lineTotal=Number(item.lineTotal)||unitPrice*qty;
+    // WooCommerce bridge may provide logistics fields using either the
+    // normalized PALMA names or WooCommerce/native aliases. Preserve the
+    // actual product logistics data instead of silently turning it into 0/""
+    // when the bridge field name differs.
+    const weightRaw = item.weightKg ?? item.weight_kg ?? item.weight ?? item.product?.weightKg ?? item.product?.weight_kg ?? item.product?.weight ?? 0;
+    const weightKg = Number.parseFloat(String(weightRaw).replace(/[^0-9.,-]/g,"").replace(",", ".")) || 0;
+    const dimensionsRaw = item.dimensionsCm ?? item.dimensions_cm ?? item.dimensions ?? item.product?.dimensionsCm ?? item.product?.dimensions_cm ?? item.product?.dimensions ?? "";
+    const dimensionsCm = (() => {
+      if (dimensionsRaw && typeof dimensionsRaw === "object") {
+        const l=dimensionsRaw.length ?? dimensionsRaw.l ?? "";
+        const w=dimensionsRaw.width ?? dimensionsRaw.w ?? "";
+        const h=dimensionsRaw.height ?? dimensionsRaw.h ?? "";
+        return [l,w,h].every(v=>String(v).trim()!=="") ? `${l} x ${w} x ${h} cm` : JSON.stringify(dimensionsRaw);
+      }
+      return String(dimensionsRaw||"");
+    })();
     itemStatements.push(env.DB.prepare("INSERT INTO products(id,sku,type,category,stock,moq,weight_kg,dimensions_cm,active) VALUES(?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku,weight_kg=excluded.weight_kg,dimensions_cm=excluded.dimensions_cm,updated_at=CURRENT_TIMESTAMP").bind(
-      productId,sku,"retail","woocommerce",0,1,Number(item.weightKg)||0,String(item.dimensionsCm||"")
+      productId,sku,"retail","woocommerce",0,1,weightKg,dimensionsCm
     ));
     itemStatements.push(env.DB.prepare("INSERT INTO product_translations(product_id,language,name,description) VALUES(?,?,?,?) ON CONFLICT(product_id,language) DO UPDATE SET name=excluded.name").bind(productId,"en",name,"WooCommerce product"));
     itemStatements.push(env.DB.prepare("INSERT INTO product_prices(product_id,currency,amount) VALUES(?,?,?) ON CONFLICT(product_id,currency) DO UPDATE SET amount=excluded.amount").bind(productId,currency,unitPrice));
