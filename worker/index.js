@@ -830,21 +830,24 @@ async function adminPacking(request,env){
   const packedBy=String(body.packedBy||pack.packed_by||"").trim();
   const checkedBy=String(body.checkedBy||pack.checked_by||"").trim();
   const confirm=body.confirm===true;
-  const required=["productQuantity","productCondition","weightDimensions","shippingLabel","commercialInvoice","packingList","finalQc"];
-  const missing=required.filter(key=>checklist[key]!==true);
-  const packageUsed=["cartonBox","woodenCrate","pallet"].some(key=>checklist[key]===true);
+  const allowedChecklistKeys=["pallet","cartonBox","protectiveWrapping","bubbleFoam","cornerProtection","strapping","other"];
+  const cleanChecklist={};
+  for(const key of allowedChecklistKeys) cleanChecklist[key]=checklist[key]===true;
+  cleanChecklist.qcPassed=checklist.qcPassed===true;
+  cleanChecklist.qcNote=String(checklist.qcNote||"").trim().slice(0,500);
+  const packageUsed=["cartonBox","pallet","protectiveWrapping","bubbleFoam","cornerProtection","strapping","other"].some(key=>cleanChecklist[key]===true);
   if(confirm){
-    if(missing.length)return json({error:"Checklist wajib belum lengkap",missing},400,cors(request));
-    if(!packageUsed)return json({error:"Pilih minimal satu jenis kemasan: Carton Box, Wooden Crate atau Pallet"},400,cors(request));
+    if(!packageUsed)return json({error:"Pilih minimal satu jenis packing: Pallet, Dus, Protective atau perlengkapan packing lainnya"},400,cors(request));
+    if(!cleanChecklist.qcPassed)return json({error:"QC Checking harus Passed sebelum packing dikonfirmasi"},400,cors(request));
     if(!packagingType)return json({error:"Jenis kemasan wajib diisi"},400,cors(request));
     if(!packedBy)return json({error:"Packed By wajib diisi"},400,cors(request));
-    if(!checkedBy)return json({error:"Checked By wajib diisi"},400,cors(request));
+    if(!checkedBy)return json({error:"QC Checked By wajib diisi"},400,cors(request));
   }
 
   const nextStatus=confirm?"PACKED":String(body.status||pack.status||"PACKING").toUpperCase();
   const packedAt=confirm?(pack.packed_at||new Date().toISOString()):pack.packed_at;
   const checkedAt=confirm?(pack.checked_at||new Date().toISOString()):pack.checked_at;
-  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(checklist),packagingType||null,packedBy||null,checkedBy||null,packedAt,checkedAt,nextStatus,order.id).run();
+  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(cleanChecklist),packagingType||null,packedBy||null,checkedBy||null,packedAt,checkedAt,nextStatus,order.id).run();
 
   if(confirm){
     await env.DB.batch([
@@ -855,7 +858,7 @@ async function adminPacking(request,env){
   }else{
     await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"SAVE_PACKING_CHECKLIST","order",order.id,JSON.stringify({packagingType,packedBy,checkedBy,checklist})).run();
   }
-  return json({ok:true,status:nextStatus,checklist,packagingType,packedBy,checkedBy,packedAt,checkedAt},200,cors(request));
+  return json({ok:true,status:nextStatus,checklist:cleanChecklist,packagingType,packedBy,checkedBy,packedAt,checkedAt},200,cors(request));
 }
 __name(adminPacking,"adminPacking");
 
@@ -1422,20 +1425,13 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     const cy=Math.max(y-92,138);
     text(M,cy,"PACKING CHECKLIST",8,"F2",muted);
     const checklistMap=[
-      ["productQuantity","Product quantity checked"],
-      ["productCondition","Product condition / QC"],
-      ["weightDimensions","Weight / dimensions checked"],
-      ["cartonBox","Carton Box"],
-      ["woodenCrate","Wooden Box / Crate"],
       ["pallet","Pallet"],
-      ["plasticWrap","Plastic Wrap"],
-      ["bubbleWrap","Bubble Wrap / Foam"],
-      ["strapping","Strapping / Banding"],
-      ["hTaping","H-Taping / Sealing"],
-      ["shippingLabel","Shipping Label"],
-      ["commercialInvoice","Commercial Invoice"],
-      ["packingList","Packing List"],
-      ["finalQc","Final QC"]
+      ["cartonBox","Dus / Carton"],
+      ["protectiveWrapping","Protective Wrapping"],
+      ["bubbleFoam","Bubble Wrap / Foam"],
+      ["cornerProtection","Corner Protection"],
+      ["strapping","Strapping / Securing"],
+      ["other","Other"]
     ];
     let checklist={};
     try{checklist=JSON.parse(String(order.packing_checklist_json||"{}"))||{}}catch(_){checklist={}}
@@ -1446,11 +1442,13 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       text(xx+12,yy+0.8,entry[1],5.7,"F1",muted);
     });
     const base=cy-16-Math.ceil(checklistMap.length/2)*12;
-    text(M,base-8,"Packing Type: "+String(order.packaging_type||"-").slice(0,24),6.5,"F1",muted);
-    text(M+175,base-8,"Packages: "+String(order.package_count||1),6.5,"F1",muted);
-    text(M+250,base-8,"Net: "+Number(order.net_weight_kg||0).toFixed(2)+" kg",6.5,"F1",muted);
-    text(M+335,base-8,"Gross: "+(order.gross_weight_kg!=null?Number(order.gross_weight_kg).toFixed(2)+" kg":"-"),6.5,"F1",muted);
-    text(M+440,base-8,"Packed By: "+String(order.packed_by||"-").slice(0,15),6.2,"F1",muted);
+    text(M,base-8,"QC CHECKING: "+(checklist.qcPassed===true?"PASSED":"NEED CORRECTION"),6.5,"F2",checklist.qcPassed===true?brown:"0.55 0.20 0.12");
+    if(checklist.qcNote) text(M,base-20,"QC Note: "+String(checklist.qcNote).slice(0,72),6.2,"F1",muted);
+    text(M,base-32,"Packing Type: "+String(order.packaging_type||"-").slice(0,24),6.5,"F1",muted);
+    text(M+175,base-32,"Packages: "+String(order.package_count||1),6.5,"F1",muted);
+    text(M+250,base-32,"Net: "+Number(order.net_weight_kg||0).toFixed(2)+" kg",6.5,"F1",muted);
+    text(M+335,base-32,"Gross: "+(order.gross_weight_kg!=null?Number(order.gross_weight_kg).toFixed(2)+" kg":"-"),6.5,"F1",muted);
+    text(M+440,base-32,"Packed By: "+String(order.packed_by||"-").slice(0,15),6.2,"F1",muted);
   }
 
   // Footer.
