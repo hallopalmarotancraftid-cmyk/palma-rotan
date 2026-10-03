@@ -839,7 +839,7 @@ async function adminPacking(request,env){
     if(!pack)return json({error:"Packing order belum tersedia"},409,cors(request));
     let checklist={};
     try{checklist=pack.packing_checklist_json?JSON.parse(pack.packing_checklist_json):{}}catch(_){checklist={}}
-    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
+    return json({ok:true,orderId:order.id,orderNumber:order.order_number,status:pack.status||"PACKING",checklist,packagingType:pack.packaging_type||"",packedBy:pack.packed_by||"",checkedBy:pack.checked_by||"",grossWeightKg:pack.gross_weight_kg!=null?Number(pack.gross_weight_kg):null,packedAt:pack.packed_at||null,checkedAt:pack.checked_at||null},200,cors(request));
   }
 
   const body=await request.json().catch(()=>({}));
@@ -853,6 +853,7 @@ async function adminPacking(request,env){
   const packagingType=String(body.packagingType||pack.packaging_type||"").trim();
   const packedBy=String(body.packedBy||pack.packed_by||"").trim();
   const checkedBy=String(body.checkedBy||pack.checked_by||"").trim();
+  const grossWeightKg=body.grossWeightKg!==undefined&&body.grossWeightKg!==null&&String(body.grossWeightKg).trim()!==""?Math.max(0,Number(body.grossWeightKg)||0):Number(pack.gross_weight_kg||0);
   const confirm=body.confirm===true;
   const allowedChecklistKeys=["pallet","cartonBox","protectiveWrapping","bubbleFoam","cornerProtection","strapping","other"];
   const cleanChecklist={};
@@ -871,7 +872,7 @@ async function adminPacking(request,env){
   const nextStatus=confirm?"PACKED":String(body.status||pack.status||"PACKING").toUpperCase();
   const packedAt=confirm?(pack.packed_at||new Date().toISOString()):pack.packed_at;
   const checkedAt=confirm?(pack.checked_at||new Date().toISOString()):pack.checked_at;
-  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(cleanChecklist),packagingType||null,packedBy||null,checkedBy||null,packedAt,checkedAt,nextStatus,order.id).run();
+  await env.DB.prepare("UPDATE packing_orders SET packing_checklist_json=?,packaging_type=?,packed_by=?,checked_by=?,gross_weight_kg=?,packed_at=?,checked_at=?,status=? WHERE order_id=?").bind(JSON.stringify(cleanChecklist),packagingType||null,packedBy||null,checkedBy||null,grossWeightKg,packedAt,checkedAt,nextStatus,order.id).run();
 
   if(confirm){
     await env.DB.batch([
@@ -882,7 +883,7 @@ async function adminPacking(request,env){
   }else{
     await env.DB.prepare("INSERT INTO audit_logs(id,admin_id,action,entity_type,entity_id,metadata_json) VALUES(?,?,?,?,?,?)").bind(id("audit"),admin.id,"SAVE_PACKING_CHECKLIST","order",order.id,JSON.stringify({packagingType,packedBy,checkedBy,checklist})).run();
   }
-  return json({ok:true,status:nextStatus,checklist:cleanChecklist,packagingType,packedBy,checkedBy,packedAt,checkedAt},200,cors(request));
+  return json({ok:true,status:nextStatus,checklist:cleanChecklist,packagingType,packedBy,checkedBy,grossWeightKg,packedAt,checkedAt},200,cors(request));
 }
 __name(adminPacking,"adminPacking");
 
@@ -1406,8 +1407,8 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     text(307,y-16,"QTY",7.0,"F2");
     text(347,y-16,"UNIT",7.0,"F2");
     text(389,y-16,"NET WT.",6.7,"F2");
-    text(439,y-16,"GROSS WT.",6.7,"F2");
-    text(499,y-16,"DIMENSION",6.7,"F2");
+    text(439,y-16,"SKU",6.7,"F2");
+    text(499,y-16,"DIMENSIONS",6.7,"F2");
   }
   y-=24;
   if(!items.length){
@@ -1429,9 +1430,8 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
         text(307,y-18,String(item.quantity ?? item.qty ?? 0),7.2,"F1");
         text(347,y-18,String(item.unit || "pcs").slice(0,7),7.0,"F1");
         const net=Number(item.weight_kg||0);
-        const gross=item.gross_weight_kg!=null?Number(item.gross_weight_kg):null;
         text(389,y-18,Number.isFinite(net)?net.toFixed(2)+" kg":"-",6.7,"F1");
-        text(439,y-18,gross!=null&&Number.isFinite(gross)?gross.toFixed(2)+" kg":"-",6.7,"F1");
+        text(439,y-18,String(item.sku||"-").slice(0,12),6.2,"F1");
         text(499,y-18,String(item.dimensions_cm||"-").slice(0,12),6.2,"F1");
       } else {
         text(50,y-18,String(index+1),8,"F1");
@@ -1528,10 +1528,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     text(M,base-8,"QC CHECKING: "+(checklist.qcPassed===true?"PASSED":"NEED CORRECTION"),6.5,"F2",checklist.qcPassed===true?brown:"0.55 0.20 0.12");
     if(checklist.qcNote) text(M,base-20,"QC Note: "+String(checklist.qcNote).slice(0,72),6.2,"F1",muted);
     text(M,base-32,"Packing Type: "+String(order.packaging_type||"-").slice(0,24),6.5,"F1",muted);
-    text(M+175,base-32,"Packages: "+String(order.package_count||1),6.5,"F1",muted);
-    text(M+250,base-32,"Net: "+Number(order.net_weight_kg||0).toFixed(2)+" kg",6.5,"F1",muted);
-    text(M+335,base-32,"Gross: "+(order.gross_weight_kg!=null?Number(order.gross_weight_kg).toFixed(2)+" kg":"-"),6.5,"F1",muted);
-    text(M+440,base-32,"Packed By: "+String(order.packed_by||"-").slice(0,15),6.2,"F1",muted);
+    text(M+175,base-32,"Total Packed Weight: "+(order.packed_gross_weight_kg!=null?Number(order.packed_gross_weight_kg).toFixed(2)+" kg":"-"),6.5,"F1",muted);
   }
 
   // Footer.
@@ -1733,6 +1730,9 @@ async function loadPdfOrderItems(env, order) {
       const freshWeight=Number.parseFloat(String(rawWeight??"").replace(/[^0-9.,-]/g,"").replace(",", "."));
       if(Number.isFinite(freshWeight) && freshWeight>0) item.weight_kg=freshWeight;
 
+      const freshSku=wp.sku??wp.SKU??wp.product?.sku??wp.product?.SKU;
+      if(String(freshSku??"").trim()) item.sku=String(freshSku).trim();
+
       const rawDim=wp.dimensionsCm??wp.dimensions_cm??wp.dimensions??wp.product?.dimensionsCm??wp.product?.dimensions_cm??wp.product?.dimensions;
       if(rawDim){
         if(typeof rawDim==="object"){
@@ -1747,8 +1747,8 @@ async function loadPdfOrderItems(env, order) {
 
       // Keep the PALMA DB snapshot synchronized for subsequent documents.
       try{
-        await env.DB.prepare("UPDATE products SET weight_kg=?,dimensions_cm=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-          .bind(Number(item.weight_kg||0),String(item.dimensions_cm||""),item.product_id).run();
+        await env.DB.prepare("UPDATE products SET sku=?,weight_kg=?,dimensions_cm=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+          .bind(String(item.sku||item.product_sku||""),Number(item.weight_kg||0),String(item.dimensions_cm||""),item.product_id).run();
       }catch(_){}
     }
   }
@@ -1938,7 +1938,7 @@ async function documentPdf(request, env, type, orderId) {
   const authorizedByLink = await verifyDocumentAccessToken(env, accessToken, type, ref);
   if (!admin && !authorizedByLink) return json({ error: "Unauthorized" }, 401, cors(request));
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg AS packed_gross_weight_kg,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(request));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
