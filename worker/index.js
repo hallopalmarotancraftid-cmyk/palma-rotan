@@ -1303,7 +1303,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const brand = "PALMA ROTAN";
   const brandLine1 = "PALMA";
   const brandLine2 = "ROTAN";
-  const tagline1 = "NATURAL ELEGANCE MINIMALIS";
+  const tagline1 = "NATURAL ELEGANCE TIMELESS";
   const tagline2 = "";
   const website = "";
   const phone = String(branding.whatsapp || "09878186933");
@@ -1519,8 +1519,11 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     try{checklist=JSON.parse(String(order.packing_checklist_json||"{}"))||{}}catch(_){checklist={}}
     checklistMap.forEach((entry,i)=>{
       const col=i%2,row=Math.floor(i/2),xx=M+col*136,yy=cy-16-row*12;
-      commands.push(tan+" RG","0.8 w",xx+" "+yy+" 7 7 re S");
-      if(checklist[entry[0]]===true) text(xx+1,yy+0.5,"✓",5.2,"F2",brown);
+      if(checklist[entry[0]]===true){
+        commands.push(brown+" rg",xx+" "+yy+" 7 7 re f");
+      }else{
+        commands.push(tan+" RG","0.8 w",xx+" "+yy+" 7 7 re S");
+      }
       text(xx+12,yy+0.8,entry[1],5.7,"F1",muted);
     });
     const base=cy-16-Math.ceil(checklistMap.length/2)*12;
