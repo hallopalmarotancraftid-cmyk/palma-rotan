@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-final-sync-1";
+var BUILD_ID = "2026-10-03-qr-repair-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1533,22 +1533,26 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     const barcodeY=250, bw=(W-2*M-20)/3;
     rect(M,barcodeY,bw,92,false);
     text(M+9,barcodeY+91,"TRACKING QR",7.0,"F2",muted);
-    if(trackingQrImage){
+    if(trackingQrMatrix){
+      drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",trackingQrMatrix,"SCAN TO TRACK");
+    }else if(trackingQrImage){
       const qs=70,qx=M+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRTrack Do","Q");
       text(M+9,barcodeY+5,"SCAN TO TRACK",5.8,"F2",brown);
     }else{
-      drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",trackingQrMatrix,"SCAN TO TRACK");
+      drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",null,"SCAN TO TRACK");
     }
     barcodeSlot(M+bw+10,barcodeY,bw,92,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
     rect(M+(bw+10)*2,barcodeY,bw,92,false);
     text(M+(bw+10)*2+9,barcodeY+91,"ORDER AUTHENTICATION QR",7.0,"F2",muted);
-    if(authQrImage){
+    if(qrMatrix){
+      drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN FOR ORDER DATA");
+    }else if(authQrImage){
       const qs=70,qx=M+(bw+10)*2+(bw-qs)/2,qy=barcodeY+9;
       commands.push("q",qs+" 0 0 "+qs+" "+qx+" "+qy+" cm","/QRAuth Do","Q");
       text(M+(bw+10)*2+9,barcodeY+5,"SCAN FOR ORDER DATA",5.5,"F2",brown);
     }else{
-      drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN TO VERIFY");
+      drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",null,"SCAN FOR ORDER DATA");
     }
   }
   if(type==="packing"){
