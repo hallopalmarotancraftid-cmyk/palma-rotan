@@ -193,7 +193,7 @@ function drawCode128(commands,x,y,maxWidth,height,value,color="0 0 0"){const wid
 __name(drawCode128,"drawCode128");
 function bytesToBase64(bytes){const arr=new Uint8Array(bytes);let out="";for(let i=0;i<arr.length;i+=0x8000)out+=String.fromCharCode(...arr.subarray(i,Math.min(i+0x8000,arr.length)));return btoa(out)}
 __name(bytesToBase64,"bytesToBase64");
-function trackingBase(env){return String(env.PUBLIC_SITE_URL||"https://palma-rotan.pages.dev").replace(/\/$/,"")}
+function trackingBase(env){return String(env.PUBLIC_API_URL||env.WORKER_PUBLIC_URL||"https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev").replace(/\/$/,"")}
 __name(trackingBase,"trackingBase");
 function trackingUrl(order,env){return trackingBase(env)+"/track/"+encodeURIComponent(order.order_number||"")+"/"+encodeURIComponent(order.auth_code||"")}
 __name(trackingUrl,"trackingUrl");
@@ -1704,7 +1704,7 @@ async function ensureDocumentAuthSchema(env){
   )`).run();
 }
 function documentVerificationBase(env){
-  return String(env.PUBLIC_SITE_URL||"https://palma-rotan.pages.dev").replace(/\/$/,"");
+  return String(env.PUBLIC_API_URL||env.WORKER_PUBLIC_URL||"https://palma-rotan-api-staging.hallo-palmarotancraft-id.workers.dev").replace(/\/$/,"");
 }
 async function ensureDocumentAuthentication(orderId,type,env){
   if(!["invoice","packing"].includes(String(type))) throw new Error("Jenis dokumen tidak valid");
