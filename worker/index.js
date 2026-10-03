@@ -1,4 +1,5 @@
 import { deflateSync, inflateSync } from "node:zlib";
+import { qrcode as palmaQrCode } from "./qrcode-generator.mjs";
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
@@ -1107,105 +1108,40 @@ function pdfLogoImage() {
   return {width,height,rgb:deflateSync(rawRgb)};
 }
 
-async function qrPngMatrix(value) {
-  const data=String(value||"").trim();
-  if(!data) return null;
-  const urls=[
-    "https://quickchart.io/qr?text="+encodeURIComponent(data)+"&size=240&margin=2&ecLevel=H&format=png",
-    "https://api.qrserver.com/v1/create-qr-code/?size=240x240&ecc=H&margin=2&format=png&data="+encodeURIComponent(data)
-  ];
-  let lastError=null;
-  for(const url of urls){
-    try{
-      const response=await fetch(url,{headers:{"accept":"image/png"},cache:"no-store"});
-      if(!response.ok) throw new Error("QR service HTTP "+response.status);
-      const png=Buffer.from(await response.arrayBuffer());
-      if(png.length<32||png.toString("ascii",1,4)!=="PNG") throw new Error("QR response bukan PNG");
-      const u32=o=>png.readUInt32BE(o);
-      const width=u32(16),height=u32(20),depth=png[24],colorType=png[25];
-      if(depth!==8||(colorType!==2&&colorType!==6)) throw new Error("QR PNG format tidak didukung");
-      const channels=colorType===6?4:3;
-      const idats=[];let p=8;
-      while(p+12<=png.length){
-        const len=u32(p),kind=png.toString("ascii",p+4,p+8),ds=p+8,de=ds+len;
-        if(kind==="IDAT") idats.push(png.subarray(ds,de));
-        p=de+4;
-        if(kind==="IEND") break;
+function qrMatrixFromValue(value) {
+  const data = String(value || "").trim();
+  if (!data) return null;
+  const qr = palmaQrCode(0, "H");
+  qr.addData(data, "Byte");
+  qr.make();
+  const width = qr.getModuleCount();
+  const rows = [];
+  for (let row = 0; row < width; row++) {
+    const runs = [];
+    let runStart = -1;
+    for (let col = 0; col < width; col++) {
+      const dark = qr.isDark(row, col);
+      if (dark && runStart < 0) runStart = col;
+      if (!dark && runStart >= 0) {
+        runs.push([runStart, col - runStart]);
+        runStart = -1;
       }
-      const raw=inflateSync(Buffer.concat(idats));
-      const stride=width*channels;
-      const rows=[];
-      let src=0,prev=Buffer.alloc(stride);
-      const paeth=(a,b,d)=>{const q=a+b-d,pa=Math.abs(q-a),pb=Math.abs(q-b),pc=Math.abs(q-d);return pa<=pb&&pa<=pc?a:pb<=pc?b:d};
-      for(let y=0;y<height;y++){
-        const filter=raw[src++],row=Buffer.alloc(stride);
-        for(let x=0;x<stride;x++){
-          const left=x>=channels?row[x-channels]:0,up=prev[x]||0,ul=x>=channels?(prev[x-channels]||0):0,v=raw[src++];
-          let out=v;
-          if(filter===1) out=(v+left)&255;
-          else if(filter===2) out=(v+up)&255;
-          else if(filter===3) out=(v+Math.floor((left+up)/2))&255;
-          else if(filter===4) out=(v+paeth(left,up,ul))&255;
-          else if(filter!==0) throw new Error("Unsupported QR PNG filter");
-          row[x]=out;
-        }
-        const runs=[];let runStart=-1;
-        for(let x=0;x<width;x++){
-          const j=x*channels,alpha=channels===4?row[j+3]:255;
-          const lum=(0.299*row[j])+(0.587*row[j+1])+(0.114*row[j+2]);
-          const dark=alpha>32&&lum<128;
-          if(dark&&runStart<0) runStart=x;
-          if(!dark&&runStart>=0){runs.push([runStart,x-runStart]);runStart=-1;}
-        }
-        if(runStart>=0) runs.push([runStart,width-runStart]);
-        rows.push(runs);prev=row;
-      }
-      return {width,height,rows};
-    }catch(error){
-      lastError=error;
-      console.error("QR_GENERATION_ERROR",{url,message:error?.message||String(error)});
     }
+    if (runStart >= 0) runs.push([runStart, width - runStart]);
+    rows.push(runs);
   }
-  throw lastError||new Error("QR generation failed");
+  return { width, height: width, rows };
 }
-
+__name(qrMatrixFromValue,"qrMatrixFromValue");
+async function qrPngMatrix(value) {
+  return qrMatrixFromValue(value);
+}
+__name(qrPngMatrix,"qrPngMatrix");
 async function qrJpegImage(value) {
-  const data=String(value||"").trim();
-  if(!data) return null;
-  const urls=[
-    "https://quickchart.io/qr?text="+encodeURIComponent(data)+"&size=320&margin=2&ecLevel=H&format=jpg",
-    "https://api.qrserver.com/v1/create-qr-code/?size=320x320&ecc=H&margin=2&format=jpg&data="+encodeURIComponent(data)
-  ];
-  let lastError=null;
-  for(const url of urls){
-    try{
-      const response=await fetch(url,{headers:{"accept":"image/jpeg"},cache:"no-store"});
-      if(!response.ok) throw new Error("QR JPEG service HTTP "+response.status);
-      const bytes=Buffer.from(await response.arrayBuffer());
-      if(bytes.length<4||bytes[0]!==0xff||bytes[1]!==0xd8) throw new Error("QR JPEG response tidak valid");
-      let p=2,width=0,height=0;
-      while(p+9<bytes.length){
-        while(p<bytes.length&&bytes[p]!==0xff)p++;
-        if(p+1>=bytes.length)break;
-        let marker=bytes[p+1]; p+=2;
-        while(marker===0xff&&p<bytes.length){marker=bytes[p++];}
-        if(marker===0xd8||marker===0xd9||marker===0x01)continue;
-        if(p+2>bytes.length)break;
-        const len=bytes.readUInt16BE(p);
-        if(marker>=0xc0&&marker<=0xcf&&![0xc4,0xc8,0xcc].includes(marker)){
-          if(p+7>=bytes.length)break;
-          height=bytes.readUInt16BE(p+3); width=bytes.readUInt16BE(p+5);
-          if(width&&height)return {width,height,jpeg:bytes};
-        }
-        p+=len;
-      }
-      throw new Error("QR JPEG dimensions tidak ditemukan");
-    }catch(error){
-      lastError=error;
-      console.error("QR_JPEG_ERROR",{url,message:error?.message||String(error)});
-    }
-  }
-  throw lastError||new Error("QR JPEG generation failed");
+  // PDF rendering now uses the bundled QR matrix directly. No external QR
+  // image service is required, so document generation cannot lose the QR
+  // because an external image host is unavailable.
+  return null;
 }
 __name(qrJpegImage,"qrJpegImage");
 
@@ -1349,26 +1285,25 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const brand = "PALMA ROTAN";
   const brandLine1 = "PALMA";
   const brandLine2 = "ROTAN";
-  const tagline1 = String(branding.pdfTagline1 || "NATURAL CRAFT");
-  const tagline2 = String(branding.pdfTagline2 || "TIMELESS BEAUTY");
-  const website = String(branding.website || "palmarotancraft.id");
-  const phone = String(branding.whatsapp || "08978186933");
-  const businessPhone = String(branding.businessPhone || phone);
+  const tagline1 = "NATURAL ELEGANCE MINIMALIS";
+  const tagline2 = "";
+  const website = "";
+  const phone = String(branding.whatsapp || "09878186933");
+  const businessPhone = "09878186933";
   const countryOrigin = String(branding.countryOrigin || "Indonesia");
   const exporter = String(branding.exporter || brand);
   const paymentTerms = String(branding.paymentTerms || "");
   const incoterms = String(branding.incoterms || "");
   const portLoading = String(branding.portLoading || "");
   const portDestination = String(branding.portDestination || "");
-  const address = String(branding.address || "Jl. Rotan Jaya, Ds. Teluk Wetan, RT 07/RW 01, Kec. Welahan, Kab. Jepara, Prov. Jawa Tengah, Indonesia");
+  const address = "Rotan Jaya Street, Teluk Wetan, Welahan, Jepara, Indonesia";
   commands.push("q", "160 0 0 55 42 760 cm", "/Logo Do", "Q");
-  text(220, 797, tagline1.slice(0, 24), 8, "F2", muted);
-  text(220, 783, tagline2.slice(0, 24), 8, "F1", muted);
-  text(410, 800, website.slice(0, 30), 7, "F1", muted);
-  if (phone) text(410, 785, "Phone / WhatsApp: "+businessPhone.slice(0, 18), 7, "F1", muted);
-  const email = String(branding.email || "hallo.palmarotancraft.id@gmail.com");
-  if (email) text(410, 770, email.slice(0, 30), 7, "F1", muted);
-  if (address) text(220, 758, address.slice(0, 54), 6.5, "F1", muted);
+  const email = "hallo.palmarotancraft.id@gmail.com";
+  const contactPhone = "09878186933";
+  const contactAddress = "Rotan Jaya Street, Teluk Wetan, Welahan, Jepara, Indonesia";
+  text(410, 800, email, 7, "F1", muted);
+  text(410, 785, "Phone / WhatsApp: "+contactPhone, 7, "F1", muted);
+  text(410, 770, contactAddress, 6.4, "F1", muted);
   line(M, 748, W-M, 748, 1.2, brown);
 
   // Document title and metadata.
@@ -1588,7 +1523,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
-  text(86,10,"Handcrafted Rattan • Natural Materials • Crafted in Indonesia",6.2,"F1",muted);
+  text(86,10,"NATURAL ELEGANCE MINIMALIS",6.2,"F1",muted);
   text(390,10,"PALMA ROTAN",7,"F2");
 
   const stream=commands.join("\n")+"\n";
