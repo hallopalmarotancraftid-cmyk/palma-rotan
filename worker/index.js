@@ -1024,9 +1024,11 @@ function makeShippingLabelPdf(order, branding = {}) {
     rect(0,382,W,50,soft);
 
     // Carrier-first header, matching the Packing List visual language.
-    cmd.push("q","58 0 0 25 24 387 cm","/JNT Do","Q");
-    text(104,397,String(branding.brand||"PALMA ROTAN"),16,"F2");
-    text(104,381,"SHIPPING LABEL",8.5,"F2",muted);
+    // Keep the J&T mark visibly rendered in the label header.
+    cmd.push("q 0.86 0.02 0.02 rg 208 387 62 25 re f Q");
+    text(219,394,"J&T",14,"F2","1 1 1");
+    text(24,397,String(branding.brand||"PALMA ROTAN"),16,"F2");
+    text(24,381,"SHIPPING LABEL",8.5,"F2",muted);
     line(18,367,279,367,1.0,brown);
 
     text(24,345,"SHIP TO",8,"F2",muted);
