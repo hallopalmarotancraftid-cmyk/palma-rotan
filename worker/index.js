@@ -1889,7 +1889,13 @@ th{font-size:10px;color:#806f60;letter-spacing:.08em}
 <div class="item"><div class="label">Jumlah Paket</div><div class="value">${Number(order.package_count||1)}</div></div>
 <div class="item"><div class="label">Tujuan</div><div class="value">${esc(addressText||"-")}</div></div>
 </div></section>
-<section class="section"><h2>Data Produk <span class="small">(${items.length} item)</span></h2>
+<section class="section"><h2>Data Paket</h2><div class="grid">
+<div class="item"><div class="label">Total Net Weight</div><div class="value">${Number(order.net_weight_kg||0).toFixed(2)} kg</div></div>
+<div class="item"><div class="label">Total Packed Weight</div><div class="value">${Number(order.gross_weight_kg||0).toFixed(2)} kg</div></div>
+<div class="item"><div class="label">Package Dimensions</div><div class="value">${esc(order.dimensions_cm||"-")}</div></div>
+<div class="item"><div class="label">Package Type</div><div class="value">${esc(order.packaging_type||"-")}</div></div>
+</div></section>
+${marker}
 <table><thead><tr><th>PRODUK</th><th>SKU</th><th>QTY</th><th>BERAT</th></tr></thead><tbody>${productHtml}</tbody></table></section>
 <section class="verified"><div class="check">✓</div><div class="verifiedText">VERIFIED</div><div class="small">Data QR sesuai dengan pesanan PALMA ROTAN.</div></section>
 </section></main></body></html>`;
@@ -1967,7 +1973,7 @@ async function documentPdf(request, env, type, orderId) {
   const authorizedByLink = await verifyDocumentAccessToken(env, accessToken, type, ref);
   if (!admin && !authorizedByLink) return json({ error: "Unauthorized" }, 401, cors(request));
   if (!ref) return json({ error: "Order reference wajib diisi" }, 400, cors(request));
-  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.gross_weight_kg AS packed_gross_weight_kg,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
+  let order = await env.DB.prepare(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.tracking_url,pk.package_count,pk.net_weight_kg,pk.gross_weight_kg AS packed_gross_weight_kg,pk.dimensions_cm,pk.packaging_type,pk.status AS packing_status,pk.auth_code,pk.packing_checklist_json,pk.packed_by,pk.checked_by,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE o.id=? OR o.order_number=? OR lower(o.order_number)=lower(?) LIMIT 1`).bind(ref,ref,ref).first();
   if (!order) return json({error:"Order tidak ditemukan",reference:ref},404,cors(request));
   const ensuredPack=await ensurePackingAuth(order.id,env);
   if(ensuredPack)order={...order,...ensuredPack};
