@@ -82,7 +82,8 @@ async function syncSettingsFromAPI() {
 async function syncProductsFromAPI() {
   try {
     const commerceBase = (window.PALMA_COMMERCE_BASE || '').replace(/\/$/, '');
-    const productsUrl = commerceBase ? `${commerceBase}/wp-json/palma/v1/products` : `${PALMA_API_BASE}/api/products`;
+    // WooCommerce is the product source of truth. Always read it through the PALMA Worker proxy so desktop and mobile use the same API path.
+    const productsUrl = commerceBase ? `${PALMA_API_BASE}/api/woo-products` : `${PALMA_API_BASE}/api/products`;
     const response = await fetch(productsUrl, {
       method: 'GET',
       headers: {
