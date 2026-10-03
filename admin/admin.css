@@ -32,3 +32,243 @@
 .packingDocs .btn{margin:0 5px 5px 0}
 @media(max-width:900px){.packingSummary{grid-template-columns:repeat(2,1fr)}.packingGrid{grid-template-columns:1fr}}
 @media(max-width:560px){.packingSummary{grid-template-columns:1fr}.checkGrid{grid-template-columns:1fr}}
+
+
+/* PALMA ROTAN ADMIN — refined UI layer
+   Visual-only: keeps existing markup, IDs, handlers and data flow intact. */
+:root{
+  --bg:#f4eee5;
+  --card:#fffdf9;
+  --card-soft:#faf6ef;
+  --ink:#2a211b;
+  --muted:#786c60;
+  --line:#ded2c3;
+  --line-strong:#cfc0af;
+  --dark:#2a211b;
+  --brown:#8a6b50;
+  --brown-dark:#70543e;
+  --green:#48654e;
+  --red:#8b4c43;
+  --shadow:0 8px 26px rgba(52,39,28,.055);
+  --shadow-hover:0 12px 34px rgba(52,39,28,.09);
+}
+html{scroll-behavior:smooth}
+body{
+  background:
+    radial-gradient(circle at 88% 0%,rgba(218,199,176,.18),transparent 30rem),
+    var(--bg);
+  letter-spacing:-.01em;
+}
+body::selection{background:#d8c3aa;color:var(--ink)}
+*{scrollbar-width:thin;scrollbar-color:#cbbba9 transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-thumb{background:#cbbba9;border-radius:10px}
+*::-webkit-scrollbar-track{background:transparent}
+
+aside{
+  width:258px;
+  background:#241d18;
+  padding:20px 14px 15px;
+  box-shadow:8px 0 28px rgba(35,26,20,.08);
+}
+.adminBrand{
+  padding:8px 13px 22px;
+  border-bottom:1px solid rgba(255,255,255,.09);
+}
+.adminBrand img{width:132px;opacity:.96}
+.adminBrand small{font-size:8px;letter-spacing:.24em;color:#bdaea0;margin-top:13px}
+nav{padding-top:13px}
+nav button,.sideBottom button,.sideBottom a{
+  position:relative;
+  padding:10px 12px;
+  margin:2px 0;
+  border-radius:9px;
+  color:#cfc3b8;
+  font-size:11px;
+  transition:background .18s ease,color .18s ease,transform .12s ease;
+}
+nav button:hover{
+  background:rgba(255,255,255,.055);
+  color:#fff;
+  transform:translateX(2px);
+}
+nav button.active{
+  background:#40342c;
+  color:#fff;
+  box-shadow:inset 3px 0 0 #b99773;
+}
+nav button:active,.sideBottom button:active,.btn:active,.top button:active{
+  transform:translateY(1px) scale(.985);
+}
+.sideBottom{
+  border-top:1px solid rgba(255,255,255,.09);
+  padding-top:12px;
+}
+.sideBottom a:hover,.sideBottom button:hover{
+  background:rgba(255,255,255,.055);
+  color:#fff;
+}
+
+main{margin-left:258px}
+.top{
+  height:78px;
+  padding:14px 34px;
+  background:rgba(255,253,249,.88);
+  border-bottom:1px solid rgba(207,192,175,.72);
+  box-shadow:0 4px 18px rgba(50,38,27,.025);
+}
+.top h1{font-size:21px;letter-spacing:-.025em}
+.top>div:last-child{gap:11px}
+.top button,.btn{
+  min-height:38px;
+  border:1px solid var(--dark);
+  border-radius:9px;
+  padding:9px 14px;
+  background:var(--dark);
+  box-shadow:0 3px 0 rgba(42,33,27,.12);
+  transition:transform .14s ease,box-shadow .14s ease,background .18s ease,border-color .18s ease;
+}
+.top button:hover,.btn:hover{
+  background:#3a2d25;
+  box-shadow:0 7px 18px rgba(42,33,27,.14);
+}
+.btn:focus-visible,.top button:focus-visible,
+nav button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{
+  outline:2px solid #b99773;
+  outline-offset:2px;
+}
+.btn.danger{background:#fff5f2;color:var(--red);border-color:#dfc3bd;box-shadow:none}
+.badge{
+  padding:5px 9px;
+  background:#f0e8dd;
+  border:1px solid #e1d5c6;
+  border-radius:999px;
+  line-height:1.1;
+  white-space:nowrap;
+}
+.panel,.stat{
+  border:1px solid var(--line);
+  border-radius:14px;
+  box-shadow:var(--shadow);
+}
+.panel{
+  padding:23px;
+  margin:22px 34px;
+  background:rgba(255,253,249,.96);
+}
+.panel:hover{box-shadow:var(--shadow-hover)}
+.panel h2{font-size:15px;letter-spacing:-.01em}
+.stats{gap:13px;margin:22px 34px}
+.stat{
+  padding:18px 19px;
+  background:rgba(255,253,249,.96);
+  transition:transform .16s ease,box-shadow .16s ease;
+}
+.stat:hover{transform:translateY(-2px);box-shadow:var(--shadow-hover)}
+.stat small{font-size:8px;letter-spacing:.12em}
+.stat strong{font-size:23px;letter-spacing:-.03em}
+.toolbar{min-height:38px}
+.toolbar .btn{white-space:nowrap}
+
+.table{
+  border-collapse:separate;
+  border-spacing:0;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#fff;
+}
+.table th,.table td{padding:13px 11px}
+.table th{
+  background:#faf6ef;
+  border-bottom:1px solid var(--line);
+  font-size:8px;
+}
+.table tbody tr{transition:background .14s ease}
+.table tbody tr:hover{background:#fcf8f2}
+.table tbody tr:last-child td{border-bottom:0}
+.table td .btn{min-height:32px;padding:7px 11px;font-size:10px}
+
+.formGrid input,.formGrid textarea,.formGrid select,
+.heroFields input,.heroFields textarea,.quote input,.quote textarea,
+.packingField input,.packingField select,.search{
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:#fffdfb;
+  transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;
+}
+.formGrid input:hover,.formGrid textarea:hover,.formGrid select:hover,
+.heroFields input:hover,.heroFields textarea:hover,
+.packingField input:hover,.packingField select:hover,.search:hover{
+  border-color:var(--line-strong);
+}
+.formGrid input:focus,.formGrid textarea:focus,.formGrid select:focus,
+.heroFields input:focus,.heroFields textarea:focus,
+.packingField input:focus,.packingField select:focus,.search:focus{
+  border-color:#b99773;
+  box-shadow:0 0 0 3px rgba(185,151,115,.12);
+  background:#fff;
+}
+.upload{
+  border-radius:8px;
+  transition:background .16s ease,transform .12s ease;
+}
+.upload:hover{background:#f4ece1}
+.upload:active{transform:translateY(1px)}
+
+.automation{gap:12px}
+.rule,.heroCard,.packingCard,.mediaCard{
+  border-radius:11px;
+  transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease;
+}
+.rule:hover,.heroCard:hover,.packingCard:hover,.mediaCard:hover{
+  border-color:var(--line-strong);
+  box-shadow:0 7px 22px rgba(52,39,28,.06);
+}
+.rule{background:#fbf7f0}
+.mediaCard{overflow:hidden}
+.mediaCard img{transition:transform .25s ease}
+.mediaCard:hover img{transform:scale(1.025)}
+
+.packingSummary>div{border-radius:10px}
+.packingCard{background:#fffdfb}
+.checkItem{
+  border-radius:9px;
+  transition:background .15s ease,border-color .15s ease,transform .12s ease;
+}
+.checkItem:hover{transform:translateY(-1px)}
+.packingActions .btn{width:100%}
+.packingDocs .btn{margin:0 5px 6px 0}
+
+.sectionNote{font-size:10.5px}
+.eyebrow{font-size:8px;letter-spacing:.2em}
+.ok,.warn,.bad{font-weight:600}
+
+input[type=checkbox]{
+  width:17px;
+  height:17px;
+  accent-color:#806146;
+  cursor:pointer;
+  vertical-align:middle;
+}
+button:disabled{
+  opacity:.52;
+  cursor:not-allowed;
+  transform:none!important;
+  box-shadow:none!important;
+}
+@media(max-width:900px){
+  aside{box-shadow:none}
+  main{margin-left:0}
+  .top{padding:13px 20px}
+  .panel{margin:18px 20px}
+  .stats{margin:18px 20px}
+}
+@media(max-width:560px){
+  .top{padding:12px 15px}
+  .top h1{font-size:18px}
+  .panel{margin:14px 14px;padding:17px}
+  .stats{margin:14px;gap:9px}
+  .stat{padding:15px}
+  .table{font-size:10px}
+}
