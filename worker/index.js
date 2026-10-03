@@ -1467,7 +1467,6 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   if(type==="packing"){
     const barcodeY=250, bw=(W-2*M-20)/3;
     rect(M,barcodeY,bw,92,false);
-    text(M+9,barcodeY+91,"TRACKING QR",7.0,"F2",muted);
     if(trackingQrMatrix){
       drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",trackingQrMatrix,"SCAN TO TRACK");
     }else if(trackingQrImage){
@@ -1479,7 +1478,6 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
     }
     barcodeSlot(M+bw+10,barcodeY,bw,92,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
     rect(M+(bw+10)*2,barcodeY,bw,92,false);
-    text(M+(bw+10)*2+9,barcodeY+91,"ORDER AUTHENTICATION QR",7.0,"F2",muted);
     if(qrMatrix){
       drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN FOR ORDER DATA");
     }else if(authQrImage){
