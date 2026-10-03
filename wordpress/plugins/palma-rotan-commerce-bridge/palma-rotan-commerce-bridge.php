@@ -94,7 +94,7 @@ final class Palma_Rotan_Commerce_Bridge {
         if ($allowed && $origin === $allowed) {
             header('Access-Control-Allow-Origin: ' . $allowed);
             header('Vary: Origin');
-            header('Access-Control-Allow-Headers: Content-Type, X-Palma-Order-Key');
+            header('Access-Control-Allow-Headers: Content-Type, Cache-Control, X-Palma-Order-Key');
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
         }
 
@@ -133,7 +133,7 @@ final class Palma_Rotan_Commerce_Bridge {
     private static function cors($response) {
         $allowed = trim((string) get_option('palma_allowed_origin', 'https://palma-rotan.pages.dev'));
         if ($allowed) $response->header('Access-Control-Allow-Origin', $allowed);
-        $response->header('Access-Control-Allow-Headers', 'Content-Type');
+        $response->header('Access-Control-Allow-Headers', 'Content-Type, Cache-Control, X-Palma-Order-Key');
         $response->header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         return $response;
     }
