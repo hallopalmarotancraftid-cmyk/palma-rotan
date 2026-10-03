@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-final-2";
+var BUILD_ID = "2026-10-03-packing-final-4";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1615,6 +1615,23 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   const out=new Uint8Array(total);let at=0;for(const c of chunks){out.set(c,at);at+=c.length;}return out;
 }
 __name(makeProfessionalPdf, "makeProfessionalPdf");
+async function wooProductImage(request,env){
+  const raw=String(new URL(request.url).searchParams.get("url")||"").trim();
+  if(!raw)return new Response("Image URL required",{status:400});
+  let target;
+  try{target=new URL(raw)}catch(_){return new Response("Invalid image URL",{status:400})}
+  if(target.protocol!=="https:"||target.hostname!=="palmarotancraft.whf.bz")return new Response("Image host not allowed",{status:403});
+  const response=await fetch(target.toString(),{method:"GET",headers:{"accept":"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},redirect:"follow",cache:"no-store"});
+  if(!response.ok)return new Response("WooCommerce image unavailable",{status:response.status});
+  const headers=new Headers();
+  const contentType=response.headers.get("content-type")||"image/jpeg";
+  headers.set("content-type",contentType);
+  headers.set("cache-control","public, max-age=300, stale-while-revalidate=3600");
+  headers.set("x-palma-image-source","woocommerce");
+  return new Response(response.body,{status:200,headers});
+}
+__name(wooProductImage,"wooProductImage");
+
 async function publicMedia(request, env, key) {
   if (!env.MEDIA) return new Response("R2 not configured", { status: 503 });
   if (!key || !key.startsWith("media/")) return new Response("Not found", { status: 404 });
@@ -1946,6 +1963,7 @@ var index_default = {
   try {
     if (url.pathname === "/api/health") return json({ ok: true, environment: env.ENVIRONMENT || "unknown", build: BUILD_ID }, 200, origin);
     if (url.pathname.startsWith("/media/") && request.method === "GET") return publicMedia(request, env, url.pathname.slice("/media/".length));
+    if (url.pathname === "/api/woo-image" && request.method === "GET") return wooProductImage(request, env);
     if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
     if (url.pathname === "/api/auth/bootstrap" && request.method === "POST") return bootstrap(request, env);
     if (url.pathname === "/api/products" && request.method === "GET") return products(request, env);
