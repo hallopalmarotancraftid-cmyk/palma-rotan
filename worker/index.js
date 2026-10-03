@@ -274,9 +274,9 @@ async function createBiteshipShipment(orderId,env){
   },0);
   const packageDims=parseDimensionsCm(row.dimensions_cm);
   const packedWeight=Number(row.gross_weight_kg);
-  const packageReady=Number.isFinite(packedWeight)&&packedWeight>0&&packageDims.length>0&&packageDims.width>0&&packageDims.height>0;
-  if(String(row.packing_status||"").toUpperCase()!=="PACKED" && !packageReady){
-    return {ok:false,skipped:true,reason:"Packing belum dikonfirmasi dengan berat packed dan dimensi paket final"};
+  const packageReady=String(row.packing_status||"").toUpperCase()==="PACKED" && Number.isFinite(packedWeight)&&packedWeight>0&&packageDims.length>0&&packageDims.width>0&&packageDims.height>0;
+  if(!packageReady){
+    return {ok:false,skipped:true,reason:"Packing harus dikonfirmasi dan berat packed + dimensi paket final wajib tersedia"};
   }
   const productSummary=itemRows.map(item=>String(item.product_name||"PALMA ROTAN").trim()+" x"+Math.max(1,Number(item.quantity)||1)).join(", ").slice(0,450);
   const items=packageReady
