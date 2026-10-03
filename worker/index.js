@@ -1001,9 +1001,9 @@ function safePdfText(value) {
 }
 __name(safePdfText, "safePdfText");
 function makeShippingLabelPdf(order, branding = {}) {
-  // Standard thermal shipping-label size: 4 x 6 inches = 288 x 432 pt.
+  // J&T printing guideline size: A6 = 10.5 x 14.8 cm.
   // Keep the existing shipping-label data; only refresh the visual layout.
-  const W=288,H=432,brown="0.24 0.12 0.06",muted="0.42 0.36 0.30",cream="0.965 0.945 0.91",soft="0.985 0.975 0.95";
+  const W=297.64,H=419.53,brown="0.24 0.12 0.06",muted="0.42 0.36 0.30",cream="0.965 0.945 0.91",soft="0.985 0.975 0.95";
   const packageCount=Math.max(1,Math.floor(Number(order.package_count)||1));
   const pages=[];
   const esc=safePdfText;
@@ -1024,37 +1024,37 @@ function makeShippingLabelPdf(order, branding = {}) {
     rect(0,382,W,50,soft);
 
     // Carrier-first header, matching the Packing List visual language.
-    cmd.push("q","58 0 0 25 204 395 cm","/JNT Do","Q");
-    text(24,405,String(branding.brand||"PALMA ROTAN"),16,"F2");
-    text(24,389,"SHIPPING LABEL",8.5,"F2",muted);
-    line(18,378,270,378,1.0,brown);
+    cmd.push("q","58 0 0 25 24 387 cm","/JNT Do","Q");
+    text(104,397,String(branding.brand||"PALMA ROTAN"),16,"F2");
+    text(104,381,"SHIPPING LABEL",8.5,"F2",muted);
+    line(18,367,279,367,1.0,brown);
 
-    text(24,356,"SHIP TO",8,"F2",muted);
-    text(24,337,name,13,"F2");
-    text(24,318,address.slice(0,48),8);
-    if(order.email)text(24,302,String(order.email).slice(0,40),7.7,"F1",muted);
-    if(order.phone)text(24,288,String(order.phone).slice(0,32),7.7,"F1",muted);
+    text(24,345,"SHIP TO",8,"F2",muted);
+    text(24,326,name,13,"F2");
+    text(24,307,address.slice(0,48),8);
+    if(order.email)text(24,291,String(order.email).slice(0,40),7.7,"F1",muted);
+    if(order.phone)text(24,277,String(order.phone).slice(0,32),7.7,"F1",muted);
 
-    rect(18,244,252,34,"0.88 0.96 0.90");
-    text(28,257,"PROVIDER: "+courier,9,"F2");
-    text(142,257,"SERVICE: "+service.slice(0,18),9,"F2");
+    rect(18,233,262,34,"0.88 0.96 0.90");
+    text(28,246,"PROVIDER: "+courier,9,"F2");
+    text(155,246,"SERVICE: "+service.slice(0,18),9,"F2");
 
-    text(24,222,"TRACKING NUMBER",8,"F2",muted);
-    text(24,203,order.tracking_number?String(order.tracking_number):"NOT ASSIGNED",15,"F2");
+    text(24,211,"TRACKING NUMBER",8,"F2",muted);
+    text(24,192,order.tracking_number?String(order.tracking_number):"NOT ASSIGNED",15,"F2");
     if(tracking){
-      drawCode128(cmd,24,134,240,52,tracking);
-      text(24,120,tracking.slice(0,38),8,"F2");
+      drawCode128(cmd,24,123,250,52,tracking);
+      text(24,109,tracking.slice(0,38),8,"F2");
     }
 
-    line(18,103,270,103,0.7);
-    text(24,88,"ORDER NO.",7,"F2",muted);
-    text(24,73,String(order.order_number||"-"),9);
-    text(150,88,"PACKAGE",7,"F2",muted);
-    text(150,73,`${packageIndex} / ${packageCount}`,9);
-    text(24,53,"PACKING LIST",7,"F2",muted);
-    text(24,38,String(order.packing_number||"-"),8);
-    text(150,53,"PRINT ALL LABELS",7,"F2",muted);
-    text(24,20,"Code 128 • Shipment identification",6,"F1",muted);
+    line(18,92,279,92,0.7);
+    text(24,77,"ORDER NO.",7,"F2",muted);
+    text(24,62,String(order.order_number||"-"),9);
+    text(165,77,"PACKAGE",7,"F2",muted);
+    text(165,62,`${packageIndex} / ${packageCount}`,9);
+    text(24,42,"PACKING LIST",7,"F2",muted);
+    text(24,27,String(order.packing_number||"-"),8);
+    text(165,42,"PRINT ALL LABELS",7,"F2",muted);
+    text(24,12,"Code 128 • Shipment identification",6,"F1",muted);
 
     pages.push(cmd.join("\n")+"\n");
   }
