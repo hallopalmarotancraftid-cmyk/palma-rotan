@@ -1869,7 +1869,12 @@ async function documentPdf(request, env, type, orderId) {
   if(type==="invoice" || type==="packing"){
     const docAuth=await ensureDocumentAuthentication(order.id,type,env);
     order.document_auth_token=docAuth.token;
-    order.document_verification_url=docAuth.verification_url;
+    // The printed authentication QR must open the full order-verification page:
+    // order data + product data + shipping data + green VERIFIED check.
+    // Keep document_authentication for audit/history, but use the packing
+    // authentication code as the QR target so invoice and packing scans share
+    // the same complete verification experience.
+    order.document_verification_url=orderVerificationUrl(order,env);
   }
   const items = await loadPdfOrderItems(env, order);
   const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
