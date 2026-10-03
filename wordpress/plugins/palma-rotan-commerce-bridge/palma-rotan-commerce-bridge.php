@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PALMA ROTAN Commerce Bridge
  * Description: WooCommerce order bridge for the PALMA ROTAN Cloudflare visitor site. Keeps WooCommerce as the single order source and exposes a small REST API for products, checkout, payment redirect, invoice and packing documents.
- * Version: 1.3.3
+ * Version: 1.3.5
  * Requires Plugins: woocommerce
  */
 
@@ -26,6 +26,7 @@ final class Palma_Rotan_Commerce_Bridge {
         add_action('woocommerce_admin_process_product_object', [__CLASS__, 'save_product_usd']);
         add_action('palma_sync_paid_order', [__CLASS__, 'run_scheduled_sync'], 10, 1);
         add_filter('rest_pre_serve_request', [__CLASS__, 'serve_cors'], 10, 4);
+        add_filter('rest_allowed_cors_headers', [__CLASS__, 'allowed_cors_headers']);
         add_action('wp_head', [__CLASS__, 'payment_page_styles']);
         add_filter('midtrans_snap_params_main_before_charge', [__CLASS__, 'midtrans_retry_order_id'], 10, 1);
     }
@@ -84,6 +85,12 @@ final class Palma_Rotan_Commerce_Bridge {
 
     public static function cors_options() {
         return self::cors(new WP_REST_Response(['ok' => true], 200));
+    }
+
+    public static function allowed_cors_headers($headers) {
+        $headers[] = 'Cache-Control';
+        $headers[] = 'X-Palma-Order-Key';
+        return array_values(array_unique($headers));
     }
 
     public static function serve_cors($served, $result, $request, $server) {
@@ -1063,7 +1070,13 @@ final class Palma_Rotan_Commerce_Bridge {
         submit_button('Save Settings'); echo '</form></div>';
     }
 
-    private static function error($message,$status) { return self::cors(new WP_Error('palma_error',$message,['status'=>$status])); }
+    private static function error($message,$status) {
+        return self::cors(new WP_REST_Response([
+            'code' => 'palma_error',
+            'message' => (string)$message,
+            'data' => ['status' => (int)$status],
+        ], (int)$status));
+    }
 }
 add_action('plugins_loaded',['Palma_Rotan_Commerce_Bridge','boot']);
 // Build artifact: PALMA ROTAN Commerce Bridge v1.3.0
