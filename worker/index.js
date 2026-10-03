@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-final-4";
+var BUILD_ID = "2026-10-03-order-verify-1";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1289,7 +1289,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
         destination:String(order.shipping_address_json||""),
         verifiedAt:String(order.updated_at||order.created_at||"")
       };
-      const authValue=JSON.stringify(authPayload);
+      const authValue=order.auth_code ? orderVerificationUrl(order,env) : "";
       const trackingValue=carrierTrackingUrl(order.courier||order.shipping_method||"",order.tracking_number||"").trim();
       if(authValue) authQrImage=await qrJpegImage(authValue);
       if(trackingValue) trackingQrImage=await qrJpegImage(trackingValue);
@@ -1632,6 +1632,24 @@ async function wooProductImage(request,env){
 }
 __name(wooProductImage,"wooProductImage");
 
+async function wooCommerceProductsProxy(request,env){
+  const commerceBase=String(env.PALMA_COMMERCE_BASE||"https://palmarotancraft.whf.bz").replace(/\/$/,"");
+  const target=commerceBase+"/wp-json/palma/v1/products";
+  const response=await fetch(target,{method:"GET",headers:{"accept":"application/json"},cache:"no-store"});
+  const body=await response.text();
+  const contentType=String(response.headers.get("content-type")||"");
+  const headers={
+    "content-type":contentType||"application/json; charset=utf-8",
+    "cache-control":"no-store",
+    "access-control-allow-origin":cors(request),
+    "vary":"Origin"
+  };
+  if(!response.ok)return new Response(JSON.stringify({ok:false,error:"WooCommerce products endpoint error",upstreamStatus:response.status,upstreamPreview:body.replace(/\s+/g," ").slice(0,500)}),{status:502,headers});
+  if(!contentType.toLowerCase().includes("application/json"))return new Response(JSON.stringify({ok:false,error:"WooCommerce products endpoint returned a non-JSON response",upstreamStatus:response.status,upstreamContentType:contentType||"unknown",upstreamPreview:body.replace(/\s+/g," ").slice(0,500)}),{status:502,headers});
+  return new Response(body,{status:200,headers});
+}
+__name(wooCommerceProductsProxy,"wooCommerceProductsProxy");
+
 async function publicMedia(request, env, key) {
   if (!env.MEDIA) return new Response("R2 not configured", { status: 503 });
   if (!key || !key.startsWith("media/")) return new Response("Not found", { status: 404 });
@@ -1760,6 +1778,23 @@ async function ensureDocumentAuthentication(orderId,type,env){
   await env.DB.prepare("INSERT INTO document_authentications(id,order_id,document_type,token_hash,token,verification_url) VALUES(?,?,?,?,?,?)")
     .bind(row.id,row.order_id,row.document_type,row.token_hash,row.token,row.verification_url).run();
   return row;
+}
+function orderVerificationUrl(order,env){
+  const base=documentVerificationBase(env);
+  return base+"/verify-order/"+encodeURIComponent(order.order_number||"")+"/"+encodeURIComponent(order.auth_code||"");
+}
+async function publicOrderVerification(request,env,orderNumber,authCode){
+  const order=await env.DB.prepare("SELECT o.*,c.first_name,c.last_name,c.email,c.phone,i.invoice_number,pk.packing_number,pk.courier,pk.tracking_number,pk.status AS shipping_status,pk.package_count,pk.auth_code,pk.packed_at,pk.checked_at FROM orders o LEFT JOIN customers c ON c.id=o.customer_id LEFT JOIN invoices i ON i.order_id=o.id LEFT JOIN packing_orders pk ON pk.order_id=o.id WHERE lower(o.order_number)=lower(?) LIMIT 1").bind(orderNumber).first();
+  if(!order||!order.auth_code||String(order.auth_code)!==String(authCode)) return new Response("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>PALMA ROTAN — Verification</title><body style='font-family:Arial,sans-serif;background:#f5eee4;padding:24px'><div style='max-width:620px;margin:auto;background:#fff;padding:28px;border-radius:16px;border:1px solid #dccbb6'><h2>PALMA ROTAN</h2><h1>Data Tidak Valid</h1><p>QR autentikasi tidak cocok dengan pesanan.</p></div></body>",{status:404,headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});
+  const items=await loadPdfOrderItems(env,order);
+  const esc=safe=>escEmail(safe);
+  const productHtml=items.length?items.map(item=>"<tr><td>"+esc(item.product_name||item.name||"-")+"</td><td>"+esc(item.sku||"-")+"</td><td style='text-align:center'>"+Number(item.quantity??item.qty??0)+"</td><td style='text-align:right'>"+Number(item.weight_kg||0).toFixed(2)+" kg</td></tr>").join(""):"<tr><td colspan='4'>Tidak ada data produk.</td></tr>";
+  const shippingAddress=String(order.shipping_address_json||"");
+  let addressText=shippingAddress;
+  try{const parsed=JSON.parse(shippingAddress);addressText=[parsed.address,parsed.city,parsed.state,parsed.postalCode,parsed.country].filter(Boolean).join(", ")}catch(_){}
+  const status=String(order.shipping_status||order.order_status||"PACKING");
+  const html="<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>PALMA ROTAN — Order Verification "+esc(order.order_number)+"</title><style>body{margin:0;background:#f5eee4;color:#211a15;font-family:Arial,sans-serif}.wrap{max-width:700px;margin:0 auto;padding:18px}.card{background:#fff;border:1px solid #dccbb6;border-radius:18px;padding:22px;box-shadow:0 10px 28px rgba(33,26,21,.08)}.brand{font-size:12px;letter-spacing:.18em;color:#806f60}.hero{text-align:center;padding:8px 0 18px;border-bottom:1px solid #eadfd2}.check{width:58px;height:58px;border-radius:50%;margin:0 auto 10px;background:#e8f3e9;color:#24753a;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700}.verified{font-size:20px;font-weight:800;letter-spacing:.08em;color:#24753a}.section{margin-top:18px}.section h2{font-size:15px;margin:0 0 10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.item{border:1px solid #eadfd2;border-radius:10px;padding:11px}.label{font-size:11px;color:#806f60}.value{font-weight:700;margin-top:4px;word-break:break-word}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 6px;border-bottom:1px solid #eadfd2;text-align:left}th{font-size:10px;color:#806f60;letter-spacing:.08em}.verifiedBottom{margin-top:20px;padding:18px;border-radius:12px;background:#f3f8f3;text-align:center}.small{font-size:11px;color:#806f60}@media(max-width:560px){.wrap{padding:10px}.card{padding:16px}.grid{grid-template-columns:1fr}table{font-size:11px}}</style></head><body><main class='wrap'><section class='card'><div class='brand'>PALMA ROTAN</div><div class='hero'><div class='check'>✓</div><div class='verified'>VERIFIED</div><div class='small'>Order authentication result</div></div><section class='section'><h2>Data Pesanan</h2><div class='grid'><div class='item'><div class='label'>Nomor Pesanan</div><div class='value'>"+esc(order.order_number||"-")+"</div></div><div class='item'><div class='label'>Invoice</div><div class='value'>"+esc(order.invoice_number||"-")+"</div></div><div class='item'><div class='label'>Packing</div><div class='value'>"+esc(order.packing_number||"-")+"</div></div><div class='item'><div class='label'>Status</div><div class='value'>"+esc(status)+"</div></div></div></section><section class='section'><h2>Data Pengiriman</h2><div class='grid'><div class='item'><div class='label'>Kurir</div><div class='value'>"+esc(order.courier||"-")+"</div></div><div class='item'><div class='label'>Nomor Resi</div><div class='value'>"+esc(order.tracking_number||"-")+"</div></div><div class='item'><div class='label'>Jumlah Paket</div><div class='value'>"+Number(order.package_count||1)+"</div></div><div class='item'><div class='label'>Tujuan</div><div class='value'>"+esc(addressText||"-")+"</div></div></div></section><section class='section'><h2>Data Produk</h2><table><thead><tr><th>PRODUK</th><th>SKU</th><th>QTY</th><th>BERAT</th></tr></thead><tbody>"+productHtml+"</tbody></table></section><section class='verifiedBottom'><div class='check'>✓</div><div class='verified'>VERIFIED</div><div class='small'>Data QR sesuai dengan pesanan PALMA ROTAN.</div></section></section></main></body></html>";
+  return new Response(html,{status:200,headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});
 }
 async function publicDocumentVerification(request,env,type,token){
   if(!["invoice","packing"].includes(String(type))) return new Response("Dokumen tidak valid",{status:404});
@@ -1964,6 +1999,7 @@ var index_default = {
     if (url.pathname === "/api/health") return json({ ok: true, environment: env.ENVIRONMENT || "unknown", build: BUILD_ID }, 200, origin);
     if (url.pathname.startsWith("/media/") && request.method === "GET") return publicMedia(request, env, url.pathname.slice("/media/".length));
     if (url.pathname === "/api/woo-image" && request.method === "GET") return wooProductImage(request, env);
+    if (url.pathname === "/api/woo-products" && request.method === "GET") return wooCommerceProductsProxy(request, env);
     if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
     if (url.pathname === "/api/auth/bootstrap" && request.method === "POST") return bootstrap(request, env);
     if (url.pathname === "/api/products" && request.method === "GET") return products(request, env);
@@ -1977,6 +2013,8 @@ var index_default = {
     if (url.pathname === "/api/admin/packing" && ["GET","POST"].includes(request.method)) return adminPacking(request, env);
     const trackMatch = url.pathname.match(/^\/track\/([^/]+)\/([^/]+)$/);
     if (trackMatch && request.method === "GET") return publicTracking(request, env, decodeURIComponent(trackMatch[1]), decodeURIComponent(trackMatch[2]));
+    const orderVerifyMatch = url.pathname.match(/^\/verify-order\/([^/]+)\/([^/]+)$/);
+    if (orderVerifyMatch && request.method === "GET") return publicOrderVerification(request, env, decodeURIComponent(orderVerifyMatch[1]), decodeURIComponent(orderVerifyMatch[2]));
     const verifyMatch = url.pathname.match(/^\/verify-document\/(invoice|packing)\/([^/]+)$/);
     if (verifyMatch && request.method === "GET") return publicDocumentVerification(request, env, decodeURIComponent(verifyMatch[1]), decodeURIComponent(verifyMatch[2]));
     if (url.pathname === "/api/admin/products" && ["GET", "POST", "PUT", "PATCH"].includes(request.method)) return adminProducts(request, env);
