@@ -573,7 +573,7 @@ async function wooCommerceOrderSync(request,env){
   const adminTotalIdr=Math.round(Number(body.adminTotalIdr||total*rate));
   const payloadHash=await sha256(raw);
   const statements=[
-    env.DB.prepare("INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_carrier,shipping_service_code,shipping_address_json,payment_status,order_status,source_system,source_order_id,source_order_number,source_idempotency_key,source_synced_at,source_payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PAID','PROCESSING',?,?,?,?,?,?)").bind(
+    env.DB.prepare("INSERT INTO orders(id,order_number,customer_id,original_currency,original_amount,shipping_amount,total_amount,admin_exchange_rate,admin_total_idr,shipping_method,shipping_carrier,shipping_service_code,shipping_address_json,payment_status,order_status,source_system,source_order_id,source_order_number,source_idempotency_key,source_synced_at,source_payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'PAID','PROCESSING',?,?,?,?,?,?)").bind(
       orderId,orderNumber,customerId,currency,subtotal,shippingAmount,total,rate,adminTotalIdr,shippingMethod,carrier,String(body.shipping?.serviceCode||""),address,"woocommerce",sourceOrderId,sourceOrderNumber,idempotencyKey,new Date().toISOString(),payloadHash
     ),
     env.DB.prepare("INSERT INTO order_status_history(id,order_id,status,note) VALUES(?,?,?,?)").bind(id("hist"),orderId,"PROCESSING","WooCommerce order PAID berhasil diterima otomatis.")
