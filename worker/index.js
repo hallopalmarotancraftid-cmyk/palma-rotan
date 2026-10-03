@@ -1954,6 +1954,20 @@ async function documentPdf(request, env, type, orderId) {
     order.document_verification_url=orderVerificationUrl(order,env);
   }
   const items = await loadPdfOrderItems(env, order);
+
+  // Net weight on the document must follow the current WooCommerce item data,
+  // not the old weight snapshot saved when the order was first created.
+  const calculatedNetWeight = items.reduce((sum, item) => {
+    const weight = Number(item.weight_kg) || 0;
+    const quantity = Number(item.quantity ?? item.qty) || 0;
+    return sum + (weight * quantity);
+  }, 0);
+  order.net_weight_kg = calculatedNetWeight;
+  try {
+    await env.DB.prepare("UPDATE packing_orders SET net_weight_kg=? WHERE order_id=?")
+      .bind(calculatedNetWeight, order.id).run();
+  } catch (_) {}
+
   const brandRows = await env.DB.prepare("SELECT key,value_json FROM site_settings WHERE key IN ('brand','website','whatsapp','email','address','pdfTagline1','pdfTagline2')").all();
   const branding = Object.fromEntries((brandRows.results || []).map((row) => {
     let value = row.value_json;
