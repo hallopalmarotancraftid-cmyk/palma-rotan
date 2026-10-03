@@ -3,7 +3,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-var BUILD_ID = "2026-10-03-packing-pdf-2";
+var BUILD_ID = "2026-10-03-packing-qr-3";
 var cors = /* @__PURE__ */ __name((request) => {
   const origin = request?.headers?.get?.("origin") || "";
   const isPagesOrigin = /^https:\/\/([a-z0-9-]+\.)?palma-rotan\.pages\.dev$/i.test(origin);
@@ -1199,11 +1199,31 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   };
   const logoImage = pdfLogoImage();
   let qrMatrix=null;
+  let trackingQrMatrix=null;
   if(type==="invoice" || type==="packing"){
     try{
       qrMatrix=await qrPngMatrix(String(order.document_verification_url||""));
     }catch(error){console.error("DOCUMENT_QR_ERROR",{orderId:order.id,type,message:error?.message||String(error)});}
+    try{
+      const trackingValue=String(order.tracking_url||carrierTrackingUrl(order.courier||order.shipping_method||"",order.tracking_number||"")).trim();
+      trackingQrMatrix=await qrPngMatrix(trackingValue);
+    }catch(error){console.error("TRACKING_QR_ERROR",{orderId:order.id,type,message:error?.message||String(error)});}
   }
+  const drawQrSlot = (x,y,w,h,title,matrix,caption) => {
+    rect(x,y,w,h,false);
+    text(x+9,y+h-14,title,7.0,"F2",muted);
+    if(!matrix){ text(x+9,y+9,"QR NOT AVAILABLE",6.2,"F2",muted); return; }
+    const size=Math.min(78,w-24,h-31);
+    const qx=x+(w-size)/2, qy=y+8, unit=size/matrix.width;
+    commands.push("q 1 1 1 rg",qx+" "+qy+" "+size+" "+size+" re f Q");
+    commands.push("q 0 0 0 rg");
+    for(let row=0;row<matrix.rows.length;row++){
+      const py=qy+size-(row+1)*unit;
+      for(const [start,len] of matrix.rows[row]) commands.push(qx+start*unit+" "+py+" "+(len*unit+0.02)+" "+(unit+0.02)+" re f");
+    }
+    commands.push("Q");
+    if(caption) text(x+9,y+5,caption,5.8,"F2",brown);
+  };
   const barcodeSlot = (x,y,w,h,title,value,displayValue=null) => {
     rect(x,y,w,h,false);
     text(x+9,y+h-14,title,7.0,"F2",muted);
@@ -1224,8 +1244,9 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
       commands.push("q 0.98 0.78 0.02 rg", x+" "+y+" 42 15 re f", "Q");
       text(x+5,y+4,"DHL",9,"F2","0.82 0.03 0.03");
     } else if(v.includes("J&T") || v.includes("JNT") || v.includes("JET")){
-      commands.push("q 0.82 0.03 0.03 rg", x+" "+y+" 42 15 re f", "Q");
-      text(x+5,y+4,"J&T",9,"F2","1 1 1");
+      commands.push("q 0.82 0.03 0.03 rg", x+" "+y+" 54 17 re f", "Q");
+      text(x+5,y+5,"J&T",9,"F2","1 1 1");
+      text(x+24,y+5,"Express",5.3,"F2","1 1 1");
     } else {
       text(x+2,y+4,v.slice(0,10)||"-",7.2,"F2",brown);
     }
@@ -1396,37 +1417,13 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
 
   }
 
-  // Packing List: barcode row is placed directly above the weight/shipping
-  // summary, with three proportional columns.
+  // Packing List: real phone-scannable QR codes for tracking and authentication.
+  // The waybill remains a Code128 barcode for conventional warehouse scanners.
   if(type==="packing"){
-    const barcodeY=Math.max(y-82,92);
-    const bw=(W-2*M-20)/3;
-    barcodeSlot(M,barcodeY,bw,72,"TRACKING BARCODE",String(order.tracking_link||""),String(order.tracking_number||"TRACKING LINK"));
-    barcodeSlot(M+bw+10,barcodeY,bw,72,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
-    barcodeSlot(M+(bw+10)*2,barcodeY,bw,72,"ORDER AUTHENTICATION BARCODE",
-      order.order_number&&order.auth_code
-        ? String(order.order_number)+"|"+String(order.auth_code)
-        : String(order.order_number||""),String(order.order_number||""));
-  } else if(type==="invoice" || type==="packing"){
-    // Each production document gets its own verification QR. Keep it separated
-    // from barcode blocks and the footer.
-    // Invoice has one clean authentication QR only. Keep it above the
-    // footer and below the payment method so it cannot collide with other
-    // barcode blocks.
-    if(qrMatrix){
-      const qrSize=72,qrX=W-M-qrSize,qrY=type==="packing"?Math.max(30,Math.min(118,Math.max(30,(y-82)-70))):118,unit=qrSize/qrMatrix.width;
-      commands.push("q 1 1 1 rg",`${qrX} ${qrY} ${qrSize} ${qrSize} re f`,"Q");
-      commands.push("q 0 0 0 rg");
-      for(let row=0;row<qrMatrix.rows.length;row++){
-        const py=qrY+qrSize-(row+1)*unit;
-        for(const [start,len] of qrMatrix.rows[row]){
-          commands.push(`${qrX+start*unit} ${py} ${len*unit+0.02} ${unit+0.02} re f`);
-        }
-      }
-      commands.push("Q");
-      text(qrX,qrY-12,type==="invoice"?"INVOICE AUTHENTICATION QR":"PACKING AUTHENTICATION QR",6.0,"F2",muted);
-      text(qrX+9,qrY-23,"SCAN TO VERIFY",6.2,"F1",muted);
-    }
+    const barcodeY=Math.max(y-88,92), bw=(W-2*M-20)/3;
+    drawQrSlot(M,barcodeY,bw,92,"TRACKING QR",trackingQrMatrix,"SCAN TO TRACK");
+    barcodeSlot(M+bw+10,barcodeY,bw,92,"RESI / WAYBILL BARCODE",String(order.tracking_number||""),String(order.tracking_number||"NOT ASSIGNED"));
+    drawQrSlot(M+(bw+10)*2,barcodeY,bw,92,"ORDER AUTHENTICATION QR",qrMatrix,"SCAN TO VERIFY");
   }
   if(type==="packing"){
     const cy=Math.max(y-92,138);
