@@ -685,7 +685,6 @@ final class Palma_Rotan_Commerce_Bridge {
             'shipping' => [
                 'carrier' => $shipping_carrier,
                 'method' => $shipping_method,
-                'serviceCode' => (string) $order->get_meta('_palma_shipping_service_code'),
                 'amount' => (float) $order->get_shipping_total(),
             ],
             'items' => $items,
