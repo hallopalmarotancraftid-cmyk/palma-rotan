@@ -1537,7 +1537,7 @@ async function makeProfessionalPdf(type, order, items, branding = {}) {
   // Footer.
   line(M,24,W-M,24,0.8,tan);
   commands.push("q", "36 0 0 12.37 42 6 cm", "/Logo Do", "Q");
-  text(86,10,"TIMELESS",6.2,"F1",muted);
+  text(86,10,"NATURAL ELEGANCE TIMELESS",6.2,"F1",muted);
   text(390,10,"PALMA ROTAN",7,"F2");
 
   const stream=commands.join("\n")+"\n";
